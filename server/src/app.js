@@ -5,9 +5,10 @@ const { createTasksRouter } = require('./routes/tasks')
 const { createCommentsRouter } = require('./routes/comments')
 const { createDependenciesRouter } = require('./routes/dependencies')
 const { createActivityRouter } = require('./routes/activity')
+const { createDashboardRouter } = require('./routes/dashboard')
 const { errorHandler, notFound } = require('./middleware/errors')
 
-function createApp({ projects, tasks, comments, dependencies, activity, pool, clientOrigin = 'http://localhost:5173' }) {
+function createApp({ projects, tasks, comments, dependencies, activity, deliveryRisks, pool, clientOrigin = 'http://localhost:5173' }) {
   const app = express()
   app.disable('x-powered-by')
   app.use(cors({ origin: clientOrigin }))
@@ -18,6 +19,7 @@ function createApp({ projects, tasks, comments, dependencies, activity, pool, cl
   }
   app.get('/api/health', health)
   app.get('/health', health)
+  if (deliveryRisks) app.use('/api/dashboard', createDashboardRouter(deliveryRisks))
   app.use('/api/projects', createProjectsRouter(projects))
   app.use('/api', createTasksRouter(tasks))
   app.use('/api', createCommentsRouter({ comments, tasks }))

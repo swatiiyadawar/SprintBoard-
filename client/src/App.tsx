@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { api, type ApiPriority, type ApiStatus, type Project, type Task as ApiTask, type TaskActivity, type TaskComment, type TaskDependency, type TaskDependent, type TaskImpact, type UpdateTaskInput } from './api'
+import { api, type ApiPriority, type ApiStatus, type DeliveryRiskSummary, type DeliveryRiskType, type Project, type Task as ApiTask, type TaskActivity, type TaskComment, type TaskDependency, type TaskDependent, type TaskImpact, type UpdateTaskInput } from './api'
 import { filterTasks } from './taskFilters'
+import { daysUntilUtc, formatUtcDashboardDate, formatUtcTaskDate, utcDateKey } from './dateUtils'
 import './App.css'
 import './ApiStates.css'
 import './TaskFilters.css'
 import './Comments.css'
 import './TaskFields.css'
+import './DeliveryRisks.css'
 
 type Status = 'Backlog' | 'In progress' | 'In review' | 'Done'
 type Priority = 'Urgent' | 'High' | 'Medium' | 'Low'
@@ -42,6 +44,12 @@ const apiPriorities: Record<Priority, ApiPriority> = {
   Urgent: 'urgent', High: 'high', Medium: 'medium', Low: 'low',
 }
 const avatarColors = ['lilac', 'peach', 'mint', 'blue']
+const riskLabels: Record<DeliveryRiskType, string> = {
+  overdue: 'Overdue',
+  blocked: 'Blocked',
+  unassigned_high_priority: 'Unassigned high priority',
+  dependency_bottleneck: 'Bottleneck',
+}
 
 function mapTask(task: ApiTask): Task {
   const assignee = task.assigneeName || 'Unassigned'
@@ -69,9 +77,7 @@ function mapTask(task: ApiTask): Task {
 }
 
 function formatDate(value: string | null) {
-  if (!value) return 'No date'
-  const date = new Date(`${value.slice(0, 10)}T00:00:00Z`)
-  return new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric', timeZone: 'UTC' }).format(date)
+  return formatUtcTaskDate(value)
 }
 
 function formatTimestamp(value: string) {
@@ -130,10 +136,7 @@ function activityMessage(event: TaskActivity) {
 }
 
 function dayDistance(value: string) {
-  const today = new Date()
-  const todayUtc = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate())
-  const due = new Date(`${value.slice(0, 10)}T00:00:00Z`).getTime()
-  return Math.ceil((due - todayUtc) / 86_400_000)
+  return daysUntilUtc(value)
 }
 
 function colorFor(initials: string) {
@@ -173,6 +176,10 @@ function App() {
   const [tasks, setTasks] = useState<Task[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
+  const [deliveryRisks, setDeliveryRisks] = useState<DeliveryRiskSummary | null>(null)
+  const [deliveryRisksLoading, setDeliveryRisksLoading] = useState(true)
+  const [deliveryRisksError, setDeliveryRisksError] = useState('')
+  const [deliveryRisksReloadKey, setDeliveryRisksReloadKey] = useState(0)
   const [saveError, setSaveError] = useState('')
   const [saving, setSaving] = useState(false)
   const [updatingTaskId, setUpdatingTaskId] = useState('')
@@ -239,6 +246,17 @@ function App() {
     const timer = window.setTimeout(() => { void loadData() }, 0)
     return () => window.clearTimeout(timer)
   }, [loadData])
+
+  useEffect(() => {
+    let active = true
+    void api.getDeliveryRisks()
+      .then((summary) => { if (active) setDeliveryRisks(summary) })
+      .catch((error: unknown) => {
+        if (active) setDeliveryRisksError(error instanceof Error ? error.message : 'Could not load delivery risks.')
+      })
+      .finally(() => { if (active) setDeliveryRisksLoading(false) })
+    return () => { active = false }
+  }, [deliveryRisksReloadKey])
 
   useEffect(() => {
     const taskId = selected?.apiId
@@ -360,6 +378,12 @@ function App() {
     window.setTimeout(() => setToast(''), 2600)
   }
 
+  const reloadDeliveryRisks = () => {
+    setDeliveryRisksLoading(true)
+    setDeliveryRisksError('')
+    setDeliveryRisksReloadKey((current) => current + 1)
+  }
+
   const createTask = async () => {
     if (!newTitle.trim() || !newProjectId || saving) return
     setSaving(true)
@@ -377,6 +401,7 @@ function App() {
         labels: [],
       })
       setTasks((current) => [mapTask(created), ...current])
+      reloadDeliveryRisks()
       setCreateMode(null)
       showToast('Task saved to the project')
     } catch (error) {
@@ -415,6 +440,7 @@ function App() {
       setAssigneeDraft(updated.assignee === 'Unassigned' ? '' : updated.assignee)
       setDueDateDraft(updated.dueDate || '')
       setActivityReloadKey((current) => current + 1)
+      reloadDeliveryRisks()
       return updated
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Could not save the task change.'
@@ -447,6 +473,7 @@ function App() {
       const [items, nextDependents, impact] = await Promise.all([api.getDependencies(selected.apiId), api.getDependents(selected.apiId), api.getDependencyImpact(selected.apiId)])
       setDependenciesState({ taskId: selected.apiId, items, dependents: nextDependents, impact, error: '' })
       setActivityReloadKey((current) => current + 1)
+      reloadDeliveryRisks()
       setDependencyCandidate('')
       showToast('Dependency added')
     } catch (error) {
@@ -471,6 +498,7 @@ function App() {
       const [items, nextDependents, impact] = await Promise.all([api.getDependencies(selected.apiId), api.getDependents(selected.apiId), api.getDependencyImpact(selected.apiId)])
       setDependenciesState({ taskId: selected.apiId, items, dependents: nextDependents, impact, error: '' })
       setActivityReloadKey((current) => current + 1)
+      reloadDeliveryRisks()
       showToast('Dependency removed')
     } catch (error) {
       setDependenciesState((current) => ({
@@ -514,7 +542,8 @@ function App() {
   }, {})
   const workloadList = Object.values(workloads).slice(0, 4)
   const maxWorkload = Math.max(1, ...workloadList.map((item) => item.count))
-  const attentionTasks = tasks.filter((task) => task.blocked || (task.dueDate && dayDistance(task.dueDate) <= 1)).slice(0, 2)
+  const attentionTasks = deliveryRisks?.tasks || []
+  const dashboardDate = deliveryRisks?.asOfDate || utcDateKey()
 
   return <div className="app-shell">
     <aside className="sidebar">
@@ -529,11 +558,38 @@ function App() {
     <main className="main-area">
       <header className="topbar"><div className="breadcrumb"><span>Workspace</span><Icon name="chevron" size={14}/><strong>{activeNav === 'Overview' ? 'Overview' : activeNav}</strong></div><div className="top-actions"><button className="top-icon notification" aria-label="Notifications"><Icon name="inbox"/><i/></button><span className="top-divider"/><button className="avatar avatar-lilac top-avatar" aria-label="Your profile">MC</button></div></header>
       <div className="page-content">
-        <div className="greeting-row"><div><div className="eyebrow"><span className="live-dot"/> MONDAY, OCTOBER 20, 2026</div><h1>Good morning, Maya <span className="wave">✳</span></h1><p className="subtitle">Here’s what’s happening across your workspace.</p></div><button className="primary-button" onClick={() => openTaskCreate()} disabled={!projects.length}><Icon name="plus" size={17}/> New task</button></div>
+        <div className="greeting-row"><div><div className="eyebrow"><span className="live-dot"/> {formatUtcDashboardDate(dashboardDate).toUpperCase()}</div><h1>Good morning, Maya <span className="wave">✳</span></h1><p className="subtitle">Here’s what’s happening across your workspace.</p></div><button className="primary-button" onClick={() => openTaskCreate()} disabled={!projects.length}><Icon name="plus" size={17}/> New task</button></div>
         <section className="stats-grid" aria-label="Workspace summary"><div className="stat-card"><div className="stat-top"><span>Open tasks</span><span className="stat-icon icon-violet"><Icon name="layers" size={17}/></span></div><div className="stat-number">{openTasks}</div><div className="stat-foot">Across {projects.length} projects</div><div className="stat-spark spark-purple"><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/></div></div><div className="stat-card"><div className="stat-top"><span>Completed tasks</span><span className="stat-icon icon-green"><Icon name="check" size={17}/></span></div><div className="stat-number">{completedTasks}</div><div className="stat-foot">From {tasks.length} total tasks</div><div className="stat-spark spark-green"><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/></div></div><div className="stat-card"><div className="stat-top"><span>Due in 7 days</span><span className="stat-icon icon-orange"><Icon name="clock" size={17}/></span></div><div className="stat-number">{dueSoon.length}</div><div className="stat-foot"><span className="trend-warn">{dueSoon.filter((task) => task.dueDate && dayDistance(task.dueDate) === 0).length} due today</span><span> · across {new Set(dueSoon.map((task) => task.projectId)).size} projects</span></div><div className="due-progress"><i/><i/><i/><i/><i/><i/><i/><i/></div></div><div className="stat-card health-card"><div className="stat-top"><span>Completion</span><span className="health-badge"><i/> Live data</span></div><div className="health-content"><div className="health-ring"><span>{completedPercent}<small>%</small></span></div><div><strong>{completedTasks} of {tasks.length} done</strong><p>Based on loaded<br/>project tasks.</p></div></div><div className="stat-foot">{projects.length} projects loaded <span className="health-spark">⌁</span></div></div></section>
 
+        <section className="delivery-risk-panel panel" aria-label="Delivery risk summary">
+          <div className="panel-header"><div><div className="panel-title-row"><h2>Delivery risks</h2><span className="muted-count">Evidence from project data</span></div><p>Deterministic indicators from due dates, priorities, and task dependencies.</p></div><span className="risk-as-of">As of {formatUtcTaskDate(dashboardDate, true)}</span></div>
+          {deliveryRisksLoading && <div className="risk-state" role="status">Loading delivery risk summary…</div>}
+          {!deliveryRisksLoading && deliveryRisksError && <div className="risk-state risk-error" role="alert"><span>{deliveryRisksError}</span><button className="subtle-link" onClick={reloadDeliveryRisks}>Retry</button></div>}
+          {!deliveryRisksLoading && !deliveryRisksError && deliveryRisks && <>
+            <div className="risk-metrics-grid">
+              <div className="risk-metric risk-total"><span>Unique affected tasks</span><strong>{deliveryRisks.summary.uniqueAffectedTasks}</strong><small>of {deliveryRisks.summary.totalTasks} total tasks</small></div>
+              <div className="risk-metric"><span>Overdue</span><strong>{deliveryRisks.summary.overdueTasks}</strong><small>Incomplete past due date</small></div>
+              <div className="risk-metric"><span>Blocked</span><strong>{deliveryRisks.summary.blockedTasks}</strong><small>Waiting on unfinished work</small></div>
+              <div className="risk-metric"><span>Unassigned high priority</span><strong>{deliveryRisks.summary.unassignedHighPriorityTasks}</strong><small>Incomplete and unassigned</small></div>
+              <div className="risk-metric"><span>Dependency bottlenecks</span><strong>{deliveryRisks.summary.dependencyBottlenecks}</strong><small>Multiple incomplete downstream tasks</small></div>
+            </div>
+            {deliveryRisks.tasks.length ? <div className="risk-task-list" aria-label="Tasks affected by delivery risks">{deliveryRisks.tasks.map((item) => <button className="risk-task-row" key={item.task.id} onClick={() => openTask(mapTask(item.task))}>
+              <span className="risk-task-main"><span className="risk-task-key">{item.task.key}</span><strong>{item.task.title}</strong><small>{item.task.project} · {statuses[item.task.status]} · {priorities[item.task.priority]}</small></span>
+              <span className="risk-task-reasons">{item.reasons.map((reason, index) => <span key={`${item.riskTypes[index]}-${reason}`} className={`risk-chip risk-${item.riskTypes[index]}`}>{reason}</span>)}</span>
+              <Icon name="chevron" size={16}/>
+            </button>)}</div> : <div className="risk-state">{deliveryRisks.summary.totalTasks ? 'No delivery risks found in the current task data.' : 'No tasks yet. Delivery risk counts will appear when your workspace has tasks.'}</div>}
+          </>}
+        </section>
+
         <section className="delivery-grid"><div className="panel work-panel"><div className="panel-header"><div><div className="panel-title-row"><h2>Team workload</h2><span className="muted-count">Current tasks</span></div><p>Tasks assigned across your team</p></div><button className="text-action" onClick={() => setFilter('My tasks')}>View my tasks <Icon name="arrow" size={15}/></button></div>{workloadList.length ? <div className="workload-list">{workloadList.map((person, index) => <div className="workload-row" key={person.name}><span className={`avatar avatar-${colorFor(person.initials)}`}>{person.initials}</span><span className="person-name">{person.name}</span><div className="workload-track"><span className={`workload-fill fill-${index}`} style={{ width: `${person.count / maxWorkload * 100}%` }}/></div><span className="workload-count">{person.count} <small>tasks</small></span></div>)}</div> : <div className="panel-empty">No assigned tasks yet</div>}</div>
-          <div className="panel focus-panel"><div className="panel-header"><div><div className="panel-title-row"><h2>Needs attention</h2><span className="attention-count">{attentionTasks.length}</span></div><p>Based on blocked and near-due tasks</p></div><button className="dots-button" aria-label="More options"><Icon name="dots"/></button></div>{attentionTasks.length ? attentionTasks.map((task) => <button className="attention-item" key={task.apiId} onClick={() => openTask(task)}><span className={`attention-icon ${task.blocked ? 'red' : 'amber'}`}><Icon name={task.blocked ? 'bolt' : 'calendar'} size={16}/></span><span className="attention-copy"><strong>{task.blocked ? 'Task is blocked' : 'Due soon'}</strong><small>{task.title}</small></span><span className="attention-tag">{task.blocked ? 'Blocked' : task.due}</span></button>) : <div className="panel-empty">Nothing needs attention right now</div>}<button className="attention-footer" onClick={() => setFilter('In progress')}>See in-progress work <Icon name="arrow" size={14}/></button></div></section>
+          <div className="panel focus-panel"><div className="panel-header"><div><div className="panel-title-row"><h2>Needs attention</h2><span className="attention-count">{deliveryRisksLoading ? '…' : deliveryRisksError ? '!' : attentionTasks.length}</span></div><p>Same affected tasks and evidence as Delivery Risks</p></div><button className="dots-button" aria-label="More options"><Icon name="dots"/></button></div>{deliveryRisksLoading ? <div className="panel-empty" role="status">Loading delivery risks…</div> : deliveryRisksError ? <div className="panel-empty attention-error" role="alert"><span>{deliveryRisksError}</span><button className="subtle-link" onClick={reloadDeliveryRisks}>Retry</button></div> : attentionTasks.length ? attentionTasks.map((item) => {
+            const isBlocked = item.riskTypes.includes('blocked')
+            const isBottleneck = item.riskTypes.includes('dependency_bottleneck')
+            const isOverdue = item.riskTypes.includes('overdue')
+            const headline = isBlocked ? 'Blocked by prerequisites' : isOverdue ? 'Past due' : isBottleneck ? 'Dependency bottleneck' : 'Unassigned high priority'
+            const icon = isBlocked || isBottleneck || !isOverdue ? 'bolt' : 'calendar'
+            return <button className="attention-item" key={item.task.id} onClick={() => openTask(mapTask(item.task))}><span className={`attention-icon ${isBlocked || isBottleneck ? 'red' : 'amber'}`}><Icon name={icon} size={16}/></span><span className="attention-copy"><strong>{headline} · {item.task.key}</strong><small>{item.task.title} — {item.reasons.join(' · ')}</small></span><span className="attention-tag">{item.riskTypes.map((risk) => riskLabels[risk]).join(' · ')}</span></button>
+          }) : <div className="panel-empty">Nothing needs attention right now</div>}<button className="attention-footer" onClick={() => setFilter('In progress')}>See in-progress work <Icon name="arrow" size={14}/></button></div></section>
 
         <section className="tasks-panel panel"><div className="tasks-heading"><div><div className="panel-title-row"><h2>{projects.find((project) => project.id === (projectFilter || activeProjectId))?.name || 'Project work'}</h2><span className="task-total">{filteredTasks.length} tasks</span></div><p>Keep an eye on the work moving your team forward.</p></div><button className="ai-button" onClick={() => setAiOpen(true)}><Icon name="spark" size={16}/> Ask Sprint AI</button></div><div className="task-toolbar"><div className="filter-tabs">{(['All tasks', 'My tasks', 'In progress'] as const).map((item) => <button className={filter === item ? 'selected-tab' : ''} key={item} onClick={() => setFilter(item)}>{item}{item === 'In progress' && <span>{tasks.filter((task) => task.status === 'In progress').length}</span>}</button>)}</div><div className="toolbar-right"><label className="task-search"><Icon name="search" size={15}/><input type="search" aria-label="Search task titles" placeholder="Search task titles…" value={query} onChange={(event) => setQuery(event.target.value)}/></label><button className={`toolbar-button ${showFilter ? 'toolbar-active' : ''}`} aria-expanded={showFilter} onClick={() => setShowFilter((value) => !value)}><Icon name="filter" size={15}/> Filter {hasActiveFilters && <i/>}</button><div className="view-switch"><button aria-label="Board view" className={view === 'Board' ? 'view-active' : ''} onClick={() => setView('Board')}><Icon name="board" size={16}/></button><button aria-label="List view" className={view === 'List' ? 'view-active' : ''} onClick={() => setView('List')}><Icon name="list" size={16}/></button></div></div></div>
           {showFilter && <div className="task-filter-panel">

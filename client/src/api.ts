@@ -56,6 +56,25 @@ export type TaskDependent = {
 
 export type TaskImpact = TaskDependent & { depth: number }
 
+export type DeliveryRiskType = 'overdue' | 'blocked' | 'unassigned_high_priority' | 'dependency_bottleneck'
+export type DeliveryRiskTask = {
+  task: Task
+  riskTypes: DeliveryRiskType[]
+  reasons: string[]
+}
+export type DeliveryRiskSummary = {
+  asOfDate: string
+  summary: {
+    totalTasks: number
+    uniqueAffectedTasks: number
+    overdueTasks: number
+    blockedTasks: number
+    unassignedHighPriorityTasks: number
+    dependencyBottlenecks: number
+  }
+  tasks: DeliveryRiskTask[]
+}
+
 export type TaskActivityType =
   | 'task_created'
   | 'status_changed'
@@ -133,6 +152,10 @@ export const api = {
       if (response.data.length < response.meta.limit) return tasks
       offset += response.data.length
     }
+  },
+  async getDeliveryRisks(): Promise<DeliveryRiskSummary> {
+    const response = await request<ApiEnvelope<DeliveryRiskSummary>>('/dashboard/delivery-risks')
+    return response.data
   },
   async createProject(input: CreateProjectInput): Promise<Project> {
     const response = await request<ApiEnvelope<Project>>('/projects', {

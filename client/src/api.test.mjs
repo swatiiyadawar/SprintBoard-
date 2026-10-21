@@ -50,6 +50,23 @@ test('loads task activity from the task-scoped activity endpoint', async () => {
   assert.deepEqual(await api.getActivity('task-1'), [event])
 })
 
+test('loads the database-backed dashboard delivery risk summary', async () => {
+  const summary = {
+    asOfDate: '2026-10-21',
+    summary: {
+      totalTasks: 3, uniqueAffectedTasks: 1, overdueTasks: 1,
+      blockedTasks: 0, unassignedHighPriorityTasks: 1, dependencyBottlenecks: 0,
+    },
+    tasks: [],
+  }
+  globalThis.fetch = async (url) => {
+    assert.equal(url, 'http://localhost:3001/api/dashboard/delivery-risks')
+    return new Response(JSON.stringify({ data: summary }), { status: 200 })
+  }
+
+  assert.deepEqual(await api.getDeliveryRisks(), summary)
+})
+
 test('loads direct dependents and downstream impact from their task endpoints', async () => {
   const dependent = { taskId: 'task-2', key: 'PLAT-2', title: 'Follow-up', status: 'backlog', projectId: 'project-1', project: 'Platform' }
   const impact = { ...dependent, depth: 2 }

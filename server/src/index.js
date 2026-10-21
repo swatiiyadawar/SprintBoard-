@@ -5,6 +5,7 @@ const { createTasksRepository } = require('./db/tasks')
 const { createCommentsRepository } = require('./db/comments')
 const { createDependenciesRepository } = require('./db/dependencies')
 const { createActivityRepository } = require('./db/activity')
+const { createDeliveryRisksRepository } = require('./db/deliveryRisks')
 const { createApp } = require('./app')
 
 async function start() {
@@ -15,7 +16,8 @@ async function start() {
   const comments = createCommentsRepository(pool)
   const dependencies = createDependenciesRepository(pool)
   const activity = createActivityRepository(pool)
-  const app = createApp({ projects, tasks, comments, dependencies, activity, pool, clientOrigin: config.clientOrigin })
+  const deliveryRisks = createDeliveryRisksRepository(pool)
+  const app = createApp({ projects, tasks, comments, dependencies, activity, deliveryRisks, pool, clientOrigin: config.clientOrigin })
   const server = app.listen(config.port, () => {
     console.log(`SprintBoard API listening on http://localhost:${config.port}`)
   })

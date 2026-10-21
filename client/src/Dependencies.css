@@ -1,0 +1,6 @@
+.dependency-impact-group{display:flex;flex-direction:column;gap:6px;margin-top:13px}
+.dependency-impact-group h4{margin:0;color:#858292;font-size:9px;font-weight:600}
+.dependency-impact-row{display:flex;align-items:center;gap:8px;padding:7px 9px;border:1px solid #efedf3;border-radius:6px;color:#6d6a7d;font-size:9px}
+.dependency-impact-row strong{color:#6b58c8;font-size:8px;font-weight:600}
+.dependency-impact-row span{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dependency-impact-row small{color:#aaa7b5;font-size:8px}

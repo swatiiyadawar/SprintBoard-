@@ -1,0 +1,145 @@
+.task-toolbar {
+  height: auto;
+  min-height: 48px;
+  gap: 12px;
+  padding-top: 7px;
+  padding-bottom: 7px;
+}
+
+.toolbar-right {
+  flex: 1;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.task-search {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: min(250px, 32vw);
+  height: 30px;
+  padding: 0 9px;
+  border: 1px solid #eeedf2;
+  border-radius: 7px;
+  background: #fff;
+  color: #9997a6;
+}
+
+.task-search:focus-within {
+  border-color: #b8afea;
+  box-shadow: 0 0 0 3px #6c59d914;
+}
+
+.task-search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #454356;
+  font: inherit;
+  font-size: 10px;
+}
+
+.task-search input::placeholder {
+  color: #aaa8b5;
+}
+
+.task-filter-panel {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(120px, 1fr)) auto;
+  align-items: end;
+  gap: 10px;
+  padding: 12px 17px;
+  border-bottom: 1px solid #f0eff3;
+  background: #fbfaff;
+}
+
+.task-filter-panel label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  color: #898797;
+  font-size: 9px;
+}
+
+.task-filter-panel select {
+  width: 100%;
+  height: 32px;
+  border: 1px solid #e9e7ef;
+  border-radius: 6px;
+  background: #fff;
+  color: #555365;
+  padding: 0 8px;
+  font: inherit;
+  font-size: 10px;
+}
+
+.task-filter-panel select:focus {
+  outline: 2px solid #b8afea;
+  outline-offset: 1px;
+}
+
+.clear-filters {
+  min-height: 32px;
+  border: 0;
+  background: transparent;
+  color: #6855c7;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.task-filter-empty {
+  min-height: 200px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  padding: 28px 18px;
+  color: #898797;
+  text-align: center;
+  font-size: 12px;
+}
+
+.task-filter-empty strong {
+  color: #39364b;
+  font-size: 14px;
+}
+
+.task-filter-empty .cancel-button {
+  margin-top: 4px;
+}
+
+@media (max-width: 760px) {
+  .task-toolbar {
+    flex-wrap: wrap;
+    padding-top: 5px;
+    padding-bottom: 7px;
+  }
+
+  .filter-tabs {
+    width: 100%;
+    height: 30px;
+  }
+
+  .toolbar-right {
+    width: 100%;
+    flex: 1 1 100%;
+  }
+
+  .task-search {
+    width: auto;
+    flex: 1;
+  }
+
+  .task-filter-panel {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 420px) {
+  .task-filter-panel {
+    grid-template-columns: 1fr;
+  }
+}

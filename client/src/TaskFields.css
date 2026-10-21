@@ -1,0 +1,102 @@
+.drawer-fields > .task-edit-field {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  font-size: 10px;
+}
+
+.task-edit-field > span {
+  color: #a3a1ae;
+}
+
+.task-edit-field > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.task-edit-field input,
+.dependency-add select {
+  min-width: 0;
+  height: 32px;
+  border: 1px solid #ecebf0;
+  border-radius: 6px;
+  background: #fff;
+  color: #5c5a6c;
+  padding: 0 8px;
+  font: inherit;
+  font-size: 10px;
+}
+
+.task-edit-field input {
+  flex: 1;
+}
+
+.task-edit-field input:focus,
+.dependency-add select:focus {
+  outline: 0;
+  border-color: #9b90e8;
+  box-shadow: 0 0 0 3px #6c59d914;
+}
+
+.task-edit-field small,
+.field-hint {
+  color: #aaa8b5;
+  font-size: 8px;
+}
+
+.dependency-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin: 10px 0;
+}
+
+.dependency-row > svg {
+  flex: none;
+  color: #8c7bda;
+}
+
+.dependency-row > span {
+  flex: 1;
+  min-width: 0;
+}
+
+.dependency-row strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dependency-add {
+  display: flex;
+  gap: 7px;
+  margin-top: 10px;
+}
+
+.dependency-add select {
+  flex: 1;
+}
+
+.dependency-add .cancel-button,
+.dependency-row .subtle-link,
+.task-edit-field .subtle-link {
+  flex: none;
+}
+
+.dependency-add .cancel-button:disabled,
+.dependency-row button:disabled,
+.task-edit-field button:disabled {
+  cursor: not-allowed;
+  opacity: .5;
+}
+
+.field-hint {
+  display: block;
+  margin-top: 7px;
+}
+
+.create-label input[type="date"] {
+  color: #5c5a6c;
+}

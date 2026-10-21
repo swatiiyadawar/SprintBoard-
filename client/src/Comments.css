@@ -1,0 +1,150 @@
+.comments-section {
+  padding-bottom: 12px;
+}
+
+.comment-count {
+  min-width: 20px;
+  padding: 2px 6px;
+  border-radius: 10px;
+  background: #f1effa;
+  color: #7b6acb;
+  text-align: center;
+  font-size: 9px;
+}
+
+.comments-state,
+.comments-error {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border-radius: 7px;
+  background: #faf9fc;
+  color: #9997a5;
+  font-size: 10px;
+}
+
+.comments-error {
+  justify-content: space-between;
+  background: #fff5f5;
+  color: #a5404c;
+}
+
+.comment-list {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.activity-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.activity-entry p {
+  overflow-wrap: anywhere;
+}
+
+.activity-mark svg {
+  color: currentColor;
+}
+
+.comment-item {
+  padding: 10px 11px;
+  border: 1px solid #efedf3;
+  border-radius: 8px;
+  overflow-wrap: anywhere;
+}
+
+.comment-item p {
+  margin: 0 0 8px;
+  color: #5f5d70;
+  font-size: 11px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.comment-item time,
+.comment-item small {
+  display: block;
+  color: #aaa8b5;
+  font-size: 8px;
+}
+
+.comment-item small {
+  margin-top: 3px;
+}
+
+.comment-composer {
+  position: sticky;
+  bottom: 0;
+  margin: auto -25px 0;
+  padding: 10px 20px 13px;
+  border-top: 1px solid #eeedf2;
+  background: #fff;
+}
+
+.comment-composer label {
+  display: block;
+  margin-bottom: 6px;
+  color: #777586;
+  font-size: 9px;
+  font-weight: 600;
+}
+
+.comment-composer textarea {
+  width: 100%;
+  min-height: 62px;
+  max-height: 150px;
+  resize: vertical;
+  border: 1px solid #eeedf2;
+  border-radius: 7px;
+  padding: 8px 9px;
+  color: #454356;
+  font: inherit;
+  font-size: 10px;
+}
+
+.comment-composer textarea:focus {
+  outline: 0;
+  border-color: #9b90e8;
+  box-shadow: 0 0 0 3px #6c59d914;
+}
+
+.comment-composer textarea:disabled {
+  background: #faf9fc;
+}
+
+.comment-composer-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 7px;
+}
+
+.comment-composer-footer > span {
+  color: #aaa8b5;
+  font-size: 8px;
+}
+
+.comment-composer-footer .primary-button {
+  min-height: 32px;
+  padding: 0 11px;
+  font-size: 10px;
+}
+
+.comment-composer-footer .primary-button:disabled {
+  opacity: .55;
+  cursor: not-allowed;
+}
+
+@media (max-width: 760px) {
+  .comment-composer {
+    margin-right: -18px;
+    margin-left: -18px;
+    padding-right: 14px;
+    padding-left: 14px;
+  }
+}

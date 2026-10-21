@@ -25,6 +25,7 @@ export type Task = {
   dueDate: string | null
   labels: string[]
   blocked: boolean
+  isBacklog: boolean
   createdAt: string
   updatedAt: string
 }
@@ -87,6 +88,7 @@ export type TaskActivityType =
   | 'blocked_changed'
   | 'dependency_added'
   | 'dependency_removed'
+  | 'backlog_changed'
 
 export type TaskActivity = {
   id: string
@@ -109,6 +111,7 @@ export type CreateTaskInput = {
   dueDate?: string | null
   labels?: string[]
   blocked?: boolean
+  isBacklog?: boolean
 }
 
 export type UpdateTaskInput = Partial<Omit<CreateTaskInput, 'projectId'>>
@@ -143,18 +146,20 @@ export const api = {
     const response = await request<ApiEnvelope<Project[]>>('/projects')
     return response.data
   },
-  async getTasks(): Promise<Task[]> {
+  async getTasks(filters: { isBacklog?: boolean } = {}): Promise<Task[]> {
     const tasks: Task[] = []
     let offset = 0
     while (true) {
-      const response = await request<TaskListEnvelope>(`/tasks?limit=100&offset=${offset}`)
+      const params = new URLSearchParams({ limit: '100', offset: String(offset) })
+      if (filters.isBacklog !== undefined) params.set('isBacklog', String(filters.isBacklog))
+      const response = await request<TaskListEnvelope>(`/tasks?${params}`)
       tasks.push(...response.data)
       if (response.data.length < response.meta.limit) return tasks
       offset += response.data.length
     }
   },
-  async getDeliveryRisks(): Promise<DeliveryRiskSummary> {
-    const response = await request<ApiEnvelope<DeliveryRiskSummary>>('/dashboard/delivery-risks')
+  async getDeliveryRisks(timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'): Promise<DeliveryRiskSummary> {
+    const response = await request<ApiEnvelope<DeliveryRiskSummary>>(`/dashboard/delivery-risks?timeZone=${encodeURIComponent(timeZone)}`)
     return response.data
   },
   async createProject(input: CreateProjectInput): Promise<Project> {

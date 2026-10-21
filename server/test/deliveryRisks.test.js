@@ -9,7 +9,7 @@ const today = '2026-10-21'
 const task = (id, overrides = {}) => ({
   id, key: `PLAT-${id}`, projectId: 'project-1', project: 'Platform', projectKey: 'PLAT',
   title: `Task ${id}`, description: null, status: 'in_progress', priority: 'medium',
-  assigneeName: 'Maya', assigneeInitials: 'M', dueDate: null, labels: [], blocked: false,
+  assigneeName: 'Maya', assigneeInitials: 'M', dueDate: null, labels: [], blocked: false, isBacklog: false,
   createdAt: '2026-10-20T10:00:00.000Z', updatedAt: '2026-10-20T10:00:00.000Z',
   ...overrides,
 })
@@ -75,7 +75,7 @@ test('dashboard repository reads tasks and dependencies in two bulk queries and 
   const pool = {
     async query(sql, values) {
       calls.push({ sql, values })
-      if (sql.includes('WITH utc_today')) return { rows: [{ asOfDate: today, id: null }] }
+      if (sql.includes('WITH local_today')) return { rows: [{ asOfDate: today, id: null }] }
       return { rows: [{ taskId: 'task-2', dependsOnTaskId: 'task-1' }] }
     },
   }
@@ -86,12 +86,13 @@ test('dashboard repository reads tasks and dependencies in two bulk queries and 
   assert.deepEqual(data.tasks, [])
   assert.deepEqual(data.dependencies, [{ taskId: 'task-2', dependsOnTaskId: 'task-1' }])
   assert.equal(calls.length, 2)
-  assert.ok(calls.every((call) => call.values === undefined))
+  assert.deepEqual(calls.map((call) => call.values), [['UTC'], undefined])
 })
 
 test('GET /api/dashboard/delivery-risks returns a consistent data envelope', async (context) => {
   const deliveryRisks = {
-    async getSummary() {
+    async getSummary(timeZone) {
+      assert.equal(timeZone, 'Asia/Kolkata')
       return { asOfDate: today, tasks: [task('1', { dueDate: '2026-10-20' })], dependencies: [] }
     },
   }
@@ -102,13 +103,15 @@ test('GET /api/dashboard/delivery-risks returns a consistent data envelope', asy
   const server = createServer(app)
   context.after(() => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())))
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
-  const response = await fetch(`http://127.0.0.1:${server.address().port}/api/dashboard/delivery-risks`)
+  const response = await fetch(`http://127.0.0.1:${server.address().port}/api/dashboard/delivery-risks?timeZone=Asia%2FKolkata`)
   const body = await response.json()
 
   assert.equal(response.status, 200)
   assert.equal(body.data.asOfDate, today)
   assert.equal(body.data.summary.totalTasks, 1)
   assert.deepEqual(body.data.tasks[0].riskTypes, ['overdue'])
+  const invalid = await fetch(`http://127.0.0.1:${server.address().port}/api/dashboard/delivery-risks?timeZone=invalid`)
+  assert.equal(invalid.status, 400)
 })
 
 test('delivery risk database failures use the shared JSON error response', async (context) => {

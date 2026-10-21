@@ -1,0 +1,56 @@
+:root{font-size:15px}
+body{font-size:15px;line-height:1.5}
+.nav-item{font-size:13px}
+.side-label,.section-heading{font-size:10px}
+.workspace-copy strong,.profile-row strong{font-size:13px}
+.workspace-copy small,.profile-row small{font-size:11px}
+.project-link{font-size:13px}
+.project-link small,.nav-item small{font-size:11px}
+.greeting-row h1{font-size:32px}
+.greeting-row .subtitle{font-size:15px;line-height:1.55}
+.eyebrow{font-size:11px}
+.stat-top{font-size:12px}
+.stat-number{font-size:29px}
+.stat-foot{font-size:12px}
+.panel h2{font-size:18px}
+.panel-header p,.tasks-heading p{font-size:13px;line-height:1.5}
+.risk-metric>span{font-size:12px}
+.risk-metric small{font-size:11px;line-height:1.45}
+.risk-task-main strong{font-size:14px;white-space:normal;overflow-wrap:anywhere}
+.risk-task-main small,.risk-task-reasons{font-size:12px;line-height:1.45}
+.attention-copy strong{font-size:13px}
+.attention-copy small{font-size:12px;line-height:1.45;white-space:normal;overflow-wrap:anywhere}
+.attention-tag{font-size:11px;white-space:normal}
+.filter-tabs button,.toolbar-button{font-size:12px}
+.task-title{font-size:13px;line-height:1.4}
+.task-card-top,.task-card-foot,.list-row{font-size:11px}
+.column-head strong{font-size:12px}
+.drawer-title{font-size:23px;line-height:1.3;overflow-wrap:anywhere}
+.drawer-fields>div>span,.drawer-fields label>span{font-size:12px}
+.drawer-fields strong,.drawer-section p,.task-edit-field input,.drawer-controls select{font-size:14px}
+.drawer-section h3{font-size:15px}
+.activity-entry p,.comment-item p{font-size:14px;line-height:1.5}
+.activity-entry small,.comment-item time,.comment-item>small{font-size:12px}
+.create-label{font-size:12px}
+.create-label input,.create-label textarea,.create-label select{font-size:14px}
+.primary-button,.cancel-button,.subtle-link{font-size:12px}
+.page-footer{font-size:11px}
+@media(max-width:760px){
+ .greeting-row h1{font-size:27px}
+ .greeting-row .subtitle{font-size:14px}
+ .stat-top{font-size:11px}
+ .stat-foot{font-size:11px}
+ .panel-header p,.tasks-heading p{font-size:12px}
+ .risk-task-row{align-items:flex-start}
+ .risk-task-main strong{font-size:13px}
+ .attention-item{align-items:flex-start}
+ .attention-copy small{display:block}
+}
+@media(max-width:420px){
+ .greeting-row h1{font-size:24px}
+ .greeting-row .subtitle{font-size:13px}
+ .eyebrow{font-size:10px}
+ .stat-top{font-size:10px}
+ .stat-foot{font-size:10px}
+ .drawer-title{font-size:21px}
+}

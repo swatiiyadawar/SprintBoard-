@@ -12,6 +12,7 @@ const TASK_SELECT = `t.id,
   t.due_date AS "dueDate",
   t.labels,
   t.blocked,
+  t.is_backlog AS "isBacklog",
   t.created_at AS "createdAt",
   t.updated_at AS "updatedAt"`
 
@@ -24,6 +25,7 @@ const ACTIVITY_FIELDS = [
   ['description', 'description_updated'],
   ['labels', 'labels_changed'],
   ['blocked', 'blocked_changed'],
+  ['isBacklog', 'backlog_changed'],
 ]
 
 function sameValue(left, right) {
@@ -49,6 +51,7 @@ function creationDetails(task) {
       dueDate: task.dueDate,
       labels: task.labels,
       blocked: task.blocked,
+      isBacklog: task.isBacklog,
     },
   }
 }
@@ -86,6 +89,10 @@ function createTasksRepository(pool) {
         values.push(filters.assignee)
         conditions.push(`t.assignee_name ILIKE $${values.length}`)
       }
+      if (filters.isBacklog !== undefined) {
+        values.push(filters.isBacklog)
+        conditions.push(`t.is_backlog = $${values.length}`)
+      }
       const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
       values.push(filters.limit, filters.offset)
       const result = await pool.query(
@@ -117,14 +124,14 @@ function createTasksRepository(pool) {
           `WITH created AS (
              INSERT INTO tasks (
                project_id, title, description, status, priority, assignee_name,
-               assignee_initials, due_date, labels, blocked
-             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+               assignee_initials, due_date, labels, blocked, is_backlog
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
              RETURNING *
            )
            SELECT ${TASK_SELECT}
            FROM created t JOIN projects p ON p.id = t.project_id`,
           [projectId, task.title, task.description, task.status, task.priority,
-            task.assigneeName, task.assigneeInitials, task.dueDate, task.labels, task.blocked],
+            task.assigneeName, task.assigneeInitials, task.dueDate, task.labels, task.blocked, task.isBacklog],
         )
         const created = result.rows[0] || null
         if (created) await writeActivity(client, created.id, 'task_created', creationDetails(created))
@@ -149,6 +156,7 @@ function createTasksRepository(pool) {
         dueDate: 'due_date',
         labels: 'labels',
         blocked: 'blocked',
+        isBacklog: 'is_backlog',
       }
       const fields = Object.keys(changes)
       const assignments = fields.map((field, index) => `${columns[field]} = $${index + 2}`)
@@ -160,7 +168,7 @@ function createTasksRepository(pool) {
           `SELECT title, description, status, priority,
                   assignee_name AS "assigneeName",
                   assignee_initials AS "assigneeInitials",
-                  due_date AS "dueDate", labels, blocked
+                  due_date AS "dueDate", labels, blocked, is_backlog AS "isBacklog"
            FROM tasks WHERE id = $1 FOR UPDATE`,
           [taskId],
         )

@@ -21,6 +21,7 @@ const startingTask = {
   dueDate: '2026-10-30',
   labels: ['api'],
   blocked: false,
+  isBacklog: false,
   createdAt: '2026-10-20T09:00:00.000Z',
   updatedAt: '2026-10-20T09:00:00.000Z',
 }
@@ -40,6 +41,7 @@ function makeTaskPool({ failUpdate = false, failActivity = false } = {}) {
     due_date: 'dueDate',
     labels: 'labels',
     blocked: 'blocked',
+    is_backlog: 'isBacklog',
   }
   const client = {
     async query(sql, values = []) {
@@ -63,6 +65,7 @@ function makeTaskPool({ failUpdate = false, failActivity = false } = {}) {
           dueDate: values[7],
           labels: values[8],
           blocked: values[9],
+          isBacklog: values[10],
         }
         return { rows: [structuredClone(task)] }
       }
@@ -103,6 +106,19 @@ test('successful task updates commit a before-and-after activity event in the sa
   assert.ok(insertIndex > -1 && insertIndex < commitIndex)
 })
 
+test('moving a task into backlog persists membership and a backlog activity event transactionally', async () => {
+  const fixture = makeTaskPool()
+  const tasks = createTasksRepository(fixture.pool)
+
+  const updated = await tasks.update(taskId, { isBacklog: true })
+
+  assert.equal(updated.isBacklog, true)
+  assert.deepEqual(fixture.events, [{
+    taskId, eventType: 'backlog_changed', details: { before: false, after: true },
+  }])
+  assert.ok(fixture.calls.findIndex(({ sql }) => sql.includes('INSERT INTO task_activity')) < fixture.calls.findIndex(({ sql }) => sql === 'COMMIT'))
+})
+
 test('successful task creation records the created task details before commit', async () => {
   const fixture = makeTaskPool()
   const tasks = createTasksRepository(fixture.pool)
@@ -117,11 +133,14 @@ test('successful task creation records the created task details before commit', 
     dueDate: null,
     labels: [],
     blocked: false,
+    isBacklog: true,
   })
 
   assert.equal(created.title, 'Add review flow')
+  assert.equal(created.isBacklog, true)
   assert.equal(fixture.events[0].eventType, 'task_created')
   assert.equal(fixture.events[0].details.after.title, 'Add review flow')
+  assert.equal(fixture.events[0].details.after.isBacklog, true)
   assert.ok(fixture.calls.findIndex(({ sql }) => sql.includes('INSERT INTO task_activity')) < fixture.calls.findIndex(({ sql }) => sql === 'COMMIT'))
 })
 

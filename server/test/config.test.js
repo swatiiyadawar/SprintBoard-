@@ -3,7 +3,7 @@ const path = require('node:path')
 const { test } = require('node:test')
 const { loadConfig } = require('../src/config')
 const { createPool } = require('../src/db/pool')
-const { validateProject, validateProjectPatch, validateTask, validateTaskFilters, validateTaskPatch } = require('../src/validation')
+const { validateProject, validateProjectPatch, validateTask, validateTaskFilters, validateTaskPatch, validateTimeZone } = require('../src/validation')
 
 test('loads safe defaults and parses environment configuration', () => {
   assert.deepEqual(loadConfig({}), {
@@ -45,14 +45,21 @@ test('validates task defaults, date, labels, and partial updates', () => {
   assert.deepEqual(validateTask({ title: 'Build API' }), {
     title: 'Build API', description: null, status: 'backlog', priority: 'medium',
     assigneeName: null, assigneeInitials: null, dueDate: null, labels: [], blocked: false,
+    isBacklog: false,
   })
   assert.deepEqual(validateTaskPatch({ dueDate: null, status: 'done' }), { status: 'done', dueDate: null })
   assert.throws(() => validateTask({ title: 'Task', dueDate: '2026-13-45' }), /dueDate/)
   assert.throws(() => validateTask({ title: 'Task', dueDate: '2026-02-31' }), /dueDate/)
   assert.throws(() => validateTask({ title: 'Task', blocked: 'yes' }), /blocked must be/)
+  assert.throws(() => validateTaskPatch({ isBacklog: 'yes' }), /isBacklog must be/)
+  assert.deepEqual(validateTaskPatch({ isBacklog: true }), { isBacklog: true })
   assert.throws(() => validateTaskPatch({}), /At least one field/)
   assert.deepEqual(validateTaskFilters({ status: 'in_progress', limit: '15' }), {
     status: 'in_progress', limit: 15, offset: 0,
   })
   assert.throws(() => validateTaskFilters({ limit: '101' }), /limit must be/)
+  assert.deepEqual(validateTaskFilters({ isBacklog: 'true' }), { isBacklog: true, limit: 50, offset: 0 })
+  assert.throws(() => validateTaskFilters({ isBacklog: '1' }), /isBacklog/)
+  assert.equal(validateTimeZone('Asia/Kolkata'), 'Asia/Kolkata')
+  assert.throws(() => validateTimeZone('not/a-timezone'), /IANA timezone/)
 })

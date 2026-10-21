@@ -108,3 +108,15 @@ test('dependency activity migration only extends the existing event type constra
   assert.match(sql, /'dependency_removed'/)
   assert.doesNotMatch(sql, /DROP TABLE|DELETE FROM/i)
 })
+
+test('backlog migration adds explicit membership and extends activity without deleting data', async () => {
+  const migrationsDir = path.resolve(__dirname, '../migrations')
+  const pool = createFakePool()
+  await runMigrations(pool, migrationsDir)
+
+  assert.ok(pool.migrationNames.has('008_add_backlog_membership.sql'))
+  const sql = pool.appliedSql.find((statement) => statement.includes('is_backlog BOOLEAN'))
+  assert.match(sql, /ADD COLUMN IF NOT EXISTS is_backlog BOOLEAN NOT NULL DEFAULT FALSE/)
+  assert.match(sql, /'backlog_changed'/)
+  assert.doesNotMatch(sql, /DROP TABLE|DELETE FROM|TRUNCATE/i)
+})

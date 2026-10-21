@@ -4,6 +4,7 @@ export type FilterableTask = {
   priority: string
   assignee: string
   projectId: string
+  isBacklog?: boolean
 }
 
 export type TaskFilters = {
@@ -12,6 +13,7 @@ export type TaskFilters = {
   priority?: string
   assignee?: string
   projectId?: string
+  isBacklog?: boolean
   shortcut?: 'All tasks' | 'My tasks' | 'In progress'
 }
 
@@ -24,6 +26,7 @@ export function filterTasks<T extends FilterableTask>(tasks: readonly T[], filte
     if (filters.priority && task.priority !== filters.priority) return false
     if (filters.assignee && task.assignee !== filters.assignee) return false
     if (filters.projectId && task.projectId !== filters.projectId) return false
+    if (filters.isBacklog !== undefined && task.isBacklog !== filters.isBacklog) return false
     if (filters.shortcut === 'My tasks' && task.assignee !== 'Maya Chen') return false
     if (filters.shortcut === 'In progress' && task.status !== 'In progress') return false
     return true

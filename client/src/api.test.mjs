@@ -60,11 +60,21 @@ test('loads the database-backed dashboard delivery risk summary', async () => {
     tasks: [],
   }
   globalThis.fetch = async (url) => {
-    assert.equal(url, 'http://localhost:3001/api/dashboard/delivery-risks')
+    assert.equal(url, 'http://localhost:3001/api/dashboard/delivery-risks?timeZone=UTC')
     return new Response(JSON.stringify({ data: summary }), { status: 200 })
   }
 
-  assert.deepEqual(await api.getDeliveryRisks(), summary)
+  assert.deepEqual(await api.getDeliveryRisks('UTC'), summary)
+})
+
+test('loads real tasks filtered by explicit backlog membership', async () => {
+  const task = { id: 'task-1', isBacklog: true }
+  globalThis.fetch = async (url) => {
+    assert.equal(url, 'http://localhost:3001/api/tasks?limit=100&offset=0&isBacklog=true')
+    return new Response(JSON.stringify({ data: [task], meta: { limit: 100, offset: 0 } }), { status: 200 })
+  }
+
+  assert.deepEqual(await api.getTasks({ isBacklog: true }), [task])
 })
 
 test('loads direct dependents and downstream impact from their task endpoints', async () => {

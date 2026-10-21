@@ -1,7 +1,7 @@
 const STATUSES = ['backlog', 'in_progress', 'in_review', 'done']
 const PRIORITIES = ['urgent', 'high', 'medium', 'low']
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
-const TASK_FIELDS = ['title', 'description', 'status', 'priority', 'assigneeName', 'assigneeInitials', 'dueDate', 'labels', 'blocked']
+const TASK_FIELDS = ['title', 'description', 'status', 'priority', 'assigneeName', 'assigneeInitials', 'dueDate', 'labels', 'blocked', 'isBacklog']
 const COMMENT_MAX_LENGTH = 5000
 
 function invalid(message) {
@@ -104,6 +104,12 @@ function normalizeTask(input, { partial = false } = {}) {
   } else if (!partial) {
     task.blocked = false
   }
+  if ('isBacklog' in input) {
+    if (typeof input.isBacklog !== 'boolean') invalid('isBacklog must be a boolean')
+    task.isBacklog = input.isBacklog
+  } else if (!partial) {
+    task.isBacklog = false
+  }
 
   if (partial) requireChanges(task)
   return task
@@ -124,6 +130,17 @@ function validateProjectId(value, field = 'projectId') {
 
 function validateTaskId(value, field = 'taskId') {
   return validateProjectId(value, field)
+}
+
+function validateTimeZone(value) {
+  if (value === undefined) return 'UTC'
+  if (typeof value !== 'string' || value.length > 100) invalid('timeZone must be a valid IANA timezone')
+  try {
+    new Intl.DateTimeFormat('en', { timeZone: value }).format(new Date())
+  } catch {
+    invalid('timeZone must be a valid IANA timezone')
+  }
+  return value
 }
 
 function validateDependency(input) {
@@ -152,7 +169,7 @@ function validateCommentPatch(input) {
 }
 
 function validateTaskFilters(query) {
-  const allowed = ['status', 'priority', 'assignee', 'projectId', 'limit', 'offset']
+  const allowed = ['status', 'priority', 'assignee', 'projectId', 'isBacklog', 'limit', 'offset']
   rejectUnknownFields(query, allowed)
   const filters = {}
   if (query.status !== undefined) {
@@ -165,6 +182,10 @@ function validateTaskFilters(query) {
   }
   if (query.assignee !== undefined) filters.assignee = cleanString(query.assignee, 'assignee', { required: true, max: 120 })
   if (query.projectId !== undefined) filters.projectId = validateProjectId(query.projectId)
+  if (query.isBacklog !== undefined) {
+    if (query.isBacklog !== 'true' && query.isBacklog !== 'false') invalid('isBacklog must be true or false')
+    filters.isBacklog = query.isBacklog === 'true'
+  }
   for (const field of ['limit', 'offset']) {
     if (query[field] === undefined) continue
     if (!/^\d+$/.test(query[field])) invalid(`${field} must be a positive integer`)
@@ -185,6 +206,7 @@ module.exports = {
   validateProjectPatch,
   validateProjectId,
   validateTaskId,
+  validateTimeZone,
   validateDependency,
   validateTask,
   validateTaskPatch,

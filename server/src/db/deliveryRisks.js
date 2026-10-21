@@ -12,22 +12,24 @@ const TASK_COLUMNS = `t.id,
   t.due_date AS "dueDate",
   t.labels,
   t.blocked,
+  t.is_backlog AS "isBacklog",
   t.created_at AS "createdAt",
   t.updated_at AS "updatedAt"`
 
 function createDeliveryRisksRepository(pool) {
   return {
-    async getSummary() {
+    async getSummary(timeZone = 'UTC') {
       const [taskResult, dependencyResult] = await Promise.all([
         pool.query(
-          `WITH utc_today AS (
-             SELECT (NOW() AT TIME ZONE 'UTC')::date::text AS "asOfDate"
+          `WITH local_today AS (
+             SELECT (NOW() AT TIME ZONE $1)::date::text AS "asOfDate"
            )
-           SELECT utc_today."asOfDate", ${TASK_COLUMNS}
-           FROM utc_today
+           SELECT local_today."asOfDate", ${TASK_COLUMNS}
+           FROM local_today
            LEFT JOIN tasks t ON TRUE
            LEFT JOIN projects p ON p.id = t.project_id
            ORDER BY t.created_at DESC NULLS LAST, t.id`,
+          [timeZone],
         ),
         pool.query(
           `SELECT task_id AS "taskId", depends_on_task_id AS "dependsOnTaskId"

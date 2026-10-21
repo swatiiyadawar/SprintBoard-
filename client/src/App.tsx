@@ -1,41 +1,36 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { api, type ApiPriority, type ApiStatus, type DeliveryRiskSummary, type DeliveryRiskType, type Project, type Task as ApiTask, type TaskActivity, type TaskComment, type TaskDependency, type TaskDependent, type TaskImpact, type UpdateTaskInput } from './api'
+import { api, type ApiPriority, type ApiStatus, type DeliveryRiskSummary, type Project, type Task as ApiTask, type TaskActivity, type TaskComment, type TaskDependency, type TaskDependent, type TaskImpact, type UpdateTaskInput } from './api'
 import { filterTasks } from './taskFilters'
-import { daysUntilUtc, formatUtcDashboardDate, formatUtcTaskDate, utcDateKey } from './dateUtils'
+import { formatLocalTaskDate } from './dateUtils'
+import { formatLocalDashboardDate, getGreeting, localDateKey, nextDashboardRefreshDelay } from './dashboardClock'
+import { BacklogView } from './BacklogView'
+import type { DashboardTask as Task } from './dashboardTypes'
+import { parseRoute, routePath, type AppRoute, type PageName } from './navigation'
+import { getOverviewData } from './overviewData'
+import { OverviewHighlights } from './OverviewHighlights'
+import { ProjectsView } from './ProjectsView'
+import { InsightsView } from './InsightsView'
+import { InboxView } from './InboxView'
 import './App.css'
 import './ApiStates.css'
 import './TaskFilters.css'
 import './Comments.css'
 import './TaskFields.css'
 import './DeliveryRisks.css'
+import './Typography.css'
+import './OverviewHighlights.css'
+import './ProjectsView.css'
+import './InsightsView.css'
 
-type Status = 'Backlog' | 'In progress' | 'In review' | 'Done'
+type Status = Task['status']
 type Priority = 'Urgent' | 'High' | 'Medium' | 'Low'
-type Task = {
-  apiId: string
-  id: string
-  projectId: string
-  title: string
-  project: string
-  status: Status
-  priority: Priority
-  assignee: string
-  initials: string
-  due: string
-  dueDate: string | null
-  labels: string[]
-  description: string
-  blocked: boolean
-  createdAt: string
-  updatedAt: string
-}
 
-const columns: Status[] = ['Backlog', 'In progress', 'In review', 'Done']
+const columns: Status[] = ['To do', 'In progress', 'In review', 'Done']
 const statuses: Record<ApiStatus, Status> = {
-  backlog: 'Backlog', in_progress: 'In progress', in_review: 'In review', done: 'Done',
+  backlog: 'To do', in_progress: 'In progress', in_review: 'In review', done: 'Done',
 }
 const apiStatuses: Record<Status, ApiStatus> = {
-  Backlog: 'backlog', 'In progress': 'in_progress', 'In review': 'in_review', Done: 'done',
+  'To do': 'backlog', 'In progress': 'in_progress', 'In review': 'in_review', Done: 'done',
 }
 const priorities: Record<ApiPriority, Priority> = {
   urgent: 'Urgent', high: 'High', medium: 'Medium', low: 'Low',
@@ -44,13 +39,6 @@ const apiPriorities: Record<Priority, ApiPriority> = {
   Urgent: 'urgent', High: 'high', Medium: 'medium', Low: 'low',
 }
 const avatarColors = ['lilac', 'peach', 'mint', 'blue']
-const riskLabels: Record<DeliveryRiskType, string> = {
-  overdue: 'Overdue',
-  blocked: 'Blocked',
-  unassigned_high_priority: 'Unassigned high priority',
-  dependency_bottleneck: 'Bottleneck',
-}
-
 function mapTask(task: ApiTask): Task {
   const assignee = task.assigneeName || 'Unassigned'
   const initials = task.assigneeInitials || (task.assigneeName
@@ -71,13 +59,14 @@ function mapTask(task: ApiTask): Task {
     labels: task.labels || [],
     description: task.description || '',
     blocked: task.blocked,
+    isBacklog: task.isBacklog,
     createdAt: task.createdAt,
     updatedAt: task.updatedAt,
   }
 }
 
 function formatDate(value: string | null) {
-  return formatUtcTaskDate(value)
+  return formatLocalTaskDate(value)
 }
 
 function formatTimestamp(value: string) {
@@ -103,8 +92,9 @@ function activityMessage(event: TaskActivity) {
   const after = event.details.after
   switch (event.eventType) {
     case 'task_created': {
-      const title = after && typeof after === 'object' ? (after as { title?: unknown }).title : undefined
-      return title ? `Task created: ${String(title)}` : 'Task created'
+      const details = after && typeof after === 'object' ? after as { title?: unknown; isBacklog?: unknown } : {}
+      if (details.title && details.isBacklog === true) return `Task created in backlog: ${String(details.title)}`
+      return details.title ? `Task created: ${String(details.title)}` : 'Task created'
     }
     case 'status_changed':
       return `Status changed from ${statuses[before as ApiStatus] || activityValue(before)} to ${statuses[after as ApiStatus] || activityValue(after)}`
@@ -122,6 +112,8 @@ function activityMessage(event: TaskActivity) {
       return `Labels changed from ${Array.isArray(before) && before.length ? before.join(', ') : 'none'} to ${Array.isArray(after) && after.length ? after.join(', ') : 'none'}`
     case 'blocked_changed':
       return after ? 'Task marked as blocked' : 'Task unblocked'
+    case 'backlog_changed':
+      return after ? 'Moved to backlog' : 'Moved to active work'
     case 'dependency_added': {
       const key = event.details.key
       const title = event.details.title
@@ -133,10 +125,6 @@ function activityMessage(event: TaskActivity) {
       return `Dependency removed${key ? `: ${String(key)}` : ''}${title ? ` · ${String(title)}` : ''}`
     }
   }
-}
-
-function dayDistance(value: string) {
-  return daysUntilUtc(value)
 }
 
 function colorFor(initials: string) {
@@ -183,8 +171,9 @@ function App() {
   const [saveError, setSaveError] = useState('')
   const [saving, setSaving] = useState(false)
   const [updatingTaskId, setUpdatingTaskId] = useState('')
-  const [activeNav, setActiveNav] = useState('Overview')
-  const [activeProjectId, setActiveProjectId] = useState('')
+  const [route, setRoute] = useState<AppRoute>(() => parseRoute(window.location.pathname))
+  const activeNav: PageName = route.page
+  const activeProjectId = route.projectId || ''
   const [view, setView] = useState<'Board' | 'List'>('Board')
   const [filter, setFilter] = useState<'All tasks' | 'My tasks' | 'In progress'>('All tasks')
   const [query, setQuery] = useState('')
@@ -200,7 +189,10 @@ function App() {
   const [newAssignee, setNewAssignee] = useState('')
   const [newDueDate, setNewDueDate] = useState('')
   const [newProjectId, setNewProjectId] = useState('')
-  const [createStatus, setCreateStatus] = useState<Status>('Backlog')
+  const [createStatus, setCreateStatus] = useState<Status>('To do')
+  const [createInBacklog, setCreateInBacklog] = useState(false)
+  const [clockNow, setClockNow] = useState(() => new Date())
+  const dashboardDate = localDateKey(clockNow)
   const [newProjectName, setNewProjectName] = useState('')
   const [newProjectKey, setNewProjectKey] = useState('')
   const [toast, setToast] = useState('')
@@ -226,6 +218,19 @@ function App() {
   const [commentSaving, setCommentSaving] = useState(false)
   const [commentsReloadKey, setCommentsReloadKey] = useState(0)
 
+  const navigateTo = useCallback((nextRoute: AppRoute) => {
+    const nextPath = routePath(nextRoute)
+    if (window.location.pathname !== nextPath) window.history.pushState({}, '', nextPath)
+    setRoute(nextRoute)
+    setProjectFilter('')
+  }, [])
+
+  useEffect(() => {
+    const restoreRoute = () => { setRoute(parseRoute(window.location.pathname)); setProjectFilter('') }
+    window.addEventListener('popstate', restoreRoute)
+    return () => window.removeEventListener('popstate', restoreRoute)
+  }, [])
+
   const loadData = useCallback(async () => {
     setLoading(true)
     setLoadError('')
@@ -233,7 +238,6 @@ function App() {
       const [nextProjects, nextTasks] = await Promise.all([api.getProjects(), api.getTasks()])
       setProjects(nextProjects)
       setTasks(nextTasks.map(mapTask))
-      setActiveProjectId((current) => nextProjects.some((project) => project.id === current) ? current : '')
       setNewProjectId((current) => current || nextProjects[0]?.id || '')
     } catch (error) {
       setLoadError(error instanceof Error ? error.message : 'Could not load projects and tasks.')
@@ -249,14 +253,21 @@ function App() {
 
   useEffect(() => {
     let active = true
-    void api.getDeliveryRisks()
+    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+    void api.getDeliveryRisks(timeZone)
       .then((summary) => { if (active) setDeliveryRisks(summary) })
       .catch((error: unknown) => {
         if (active) setDeliveryRisksError(error instanceof Error ? error.message : 'Could not load delivery risks.')
       })
       .finally(() => { if (active) setDeliveryRisksLoading(false) })
     return () => { active = false }
-  }, [deliveryRisksReloadKey])
+  }, [deliveryRisksReloadKey, dashboardDate])
+
+  useEffect(() => {
+    const refreshClock = () => setClockNow(new Date())
+    const timer = window.setTimeout(refreshClock, nextDashboardRefreshDelay(clockNow))
+    return () => window.clearTimeout(timer)
+  }, [clockNow])
 
   useEffect(() => {
     const taskId = selected?.apiId
@@ -323,7 +334,9 @@ function App() {
     assignee: assigneeFilter,
     projectId: projectFilter || activeProjectId,
     shortcut: filter,
+    isBacklog: false,
   }), [tasks, activeProjectId, filter, query, statusFilter, priorityFilter, assigneeFilter, projectFilter])
+  const backlogTasks = useMemo(() => tasks.filter((task) => task.isBacklog), [tasks])
   const assignees = useMemo(() => [...new Set(tasks.map((task) => task.assignee))].sort((a, b) => a.localeCompare(b)), [tasks])
   const hasActiveFilters = Boolean(query.trim() || statusFilter || priorityFilter || assigneeFilter || projectFilter || activeProjectId || filter !== 'All tasks')
   const currentComments = commentsState && commentsState.taskId === selected?.apiId && commentsState.reloadKey === commentsReloadKey ? commentsState : null
@@ -350,17 +363,18 @@ function App() {
     setPriorityFilter('')
     setAssigneeFilter('')
     setProjectFilter('')
-    setActiveProjectId('')
     setFilter('All tasks')
+    if (activeProjectId) navigateTo({ page: 'Overview' })
   }
 
-  const openTaskCreate = (status: Status = 'Backlog') => {
+  const openTaskCreate = (status: Status = 'To do', inBacklog = false) => {
     setSaveError('')
     setNewTitle('')
     setNewDescription('')
     setNewAssignee('')
     setNewDueDate('')
     setCreateStatus(status)
+    setCreateInBacklog(inBacklog)
     setNewProjectId(activeProjectId || projects[0]?.id || '')
     setCreateMode('task')
     setFilter(status === 'In progress' ? 'In progress' : 'All tasks')
@@ -399,11 +413,12 @@ function App() {
         assigneeInitials: newAssignee.trim() ? assigneeInitials(newAssignee) : null,
         dueDate: newDueDate || null,
         labels: [],
+        isBacklog: createInBacklog,
       })
       setTasks((current) => [mapTask(created), ...current])
       reloadDeliveryRisks()
       setCreateMode(null)
-      showToast('Task saved to the project')
+      showToast(createInBacklog ? 'Task added to backlog' : 'Task saved to active work')
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : 'Could not create the task.')
     } finally {
@@ -418,8 +433,7 @@ function App() {
     try {
       const created = await api.createProject({ name: newProjectName.trim(), key: newProjectKey.trim(), description: null })
       setProjects((current) => [created, ...current])
-      setActiveProjectId(created.id)
-      setActiveNav('Projects')
+      navigateTo({ page: 'Projects', projectId: created.id })
       setCreateMode(null)
       showToast('Project saved')
     } catch (error) {
@@ -450,6 +464,11 @@ function App() {
     } finally {
       setUpdatingTaskId('')
     }
+  }
+
+  const moveTaskToBacklog = async (task: Task, isBacklog: boolean) => {
+    const updated = await updateTask(task, { isBacklog })
+    if (updated) showToast(isBacklog ? 'Task moved to backlog' : 'Task moved to active work')
   }
 
   const openTask = (task: Task) => {
@@ -529,74 +548,32 @@ function App() {
     }
   }
 
-  const openTasks = tasks.filter((task) => task.status !== 'Done').length
-  const completedTasks = tasks.filter((task) => task.status === 'Done').length
-  const dueSoon = tasks.filter((task) => task.dueDate && dayDistance(task.dueDate) >= 0 && dayDistance(task.dueDate) <= 7)
+  const overviewData = getOverviewData(tasks, dashboardDate)
+  const { openTasks, completedTasks } = overviewData
   const completedPercent = tasks.length ? Math.round(completedTasks / tasks.length * 100) : 0
-  const workloads = tasks.reduce<Record<string, { name: string; initials: string; count: number }>>((grouped, task) => {
-    if (task.assignee === 'Unassigned') return grouped
-    const current = grouped[task.assignee] || { name: task.assignee, initials: task.initials, count: 0 }
-    current.count += 1
-    grouped[task.assignee] = current
-    return grouped
-  }, {})
-  const workloadList = Object.values(workloads).slice(0, 4)
-  const maxWorkload = Math.max(1, ...workloadList.map((item) => item.count))
-  const attentionTasks = deliveryRisks?.tasks || []
-  const dashboardDate = deliveryRisks?.asOfDate || utcDateKey()
-
   return <div className="app-shell">
     <aside className="sidebar">
       <div className="brand"><div className="brand-mark"><span/><span/><span/></div><span>Sprint<span className="brand-light">Board</span></span><button className="icon-button workspace-menu" aria-label="Switch workspace"><Icon name="down" size={15}/></button></div>
       <button className="workspace-card"><span className="workspace-avatar">S</span><span className="workspace-copy"><strong>Studio North</strong><small>Free workspace</small></span><Icon name="down" size={15}/></button>
       <div className="side-label">WORKSPACE</div>
-      <nav className="main-nav" aria-label="Main navigation">{[{ name: 'Overview', icon: 'grid' }, { name: 'Projects', icon: 'layers', count: String(projects.length) }, { name: 'Inbox', icon: 'inbox', count: '3' }, { name: 'Insights', icon: 'chart' }].map((item) => <button key={item.name} className={`nav-item ${activeNav === item.name ? 'active' : ''}`} onClick={() => { setActiveNav(item.name); if (item.name !== 'Projects') setActiveProjectId('') }}><Icon name={item.icon}/><span>{item.name}</span>{item.count && <small>{item.count}</small>}</button>)}</nav>
-      <div className="side-section"><div className="section-heading"><span>YOUR PROJECTS</span><button className="tiny-button" onClick={openProjectCreate} aria-label="Add a project"><Icon name="plus" size={16}/></button></div>{projects.length ? projects.map((project, index) => <button className={`project-link ${activeProjectId === project.id ? 'project-selected' : ''}`} key={project.id} onClick={() => { setProjectFilter(''); setActiveProjectId(project.id); setActiveNav('Projects') }}><span className={`project-dot ${avatarColors[index % avatarColors.length]}`}/><span>{project.name}</span><small>{tasks.filter((task) => task.projectId === project.id).length}</small></button>) : <div className="project-empty">{loading ? 'Loading projects…' : 'No projects yet'}</div>}</div>
-      <div className="sidebar-bottom"><div className="upgrade-card"><div className="upgrade-glyph"><Icon name="spark" size={16}/></div><strong>Make room for big ideas</strong><p>Invite your team and build something great together.</p><button onClick={() => showToast('Invite flow coming soon')}>Invite teammates <Icon name="arrow" size={14}/></button></div><button className="profile-row"><span className="avatar avatar-lilac">MC</span><span><strong>Maya Chen</strong><small>Product designer</small></span><Icon name="dots"/></button></div>
+      <nav className="main-nav" aria-label="Main navigation">{[{ name: 'Overview', icon: 'grid' }, { name: 'Backlog', icon: 'layers', count: loading ? '…' : loadError ? '!' : String(backlogTasks.length) }, { name: 'Projects', icon: 'layers', count: loading ? '…' : loadError ? '!' : String(projects.length) }, { name: 'Inbox', icon: 'inbox' }, { name: 'Insights', icon: 'chart' }].map((item) => <button key={item.name} aria-label={item.name} title={item.name} className={`nav-item ${activeNav === item.name ? 'active' : ''}`} onClick={() => navigateTo({ page: item.name as PageName })}><Icon name={item.icon}/><span>{item.name}</span>{item.count && <small>{item.count}</small>}</button>)}</nav>
+      <div className="side-section"><div className="section-heading"><span>YOUR PROJECTS</span><button className="tiny-button" onClick={openProjectCreate} aria-label="Add a project"><Icon name="plus" size={16}/></button></div>{projects.length ? projects.map((project, index) => <button className={`project-link ${activeProjectId === project.id ? 'project-selected' : ''}`} key={project.id} onClick={() => navigateTo({ page: 'Projects', projectId: project.id })}><span className={`project-dot ${avatarColors[index % avatarColors.length]}`}/><span>{project.name}</span><small>{tasks.filter((task) => task.projectId === project.id).length}</small></button>) : <div className="project-empty">{loading ? 'Loading projects…' : 'No projects yet'}</div>}</div>
+      <div className="sidebar-bottom"><div className="upgrade-card"><div className="upgrade-glyph"><Icon name="spark" size={16}/></div><strong>Make room for big ideas</strong><p>Invite your team and build something great together.</p><button onClick={() => showToast('Invite flow coming soon')}>Invite teammates <Icon name="arrow" size={14}/></button></div><button className="profile-row"><span className="avatar avatar-lilac">W</span><span><strong>Workspace member</strong><small>Profile not connected</small></span><Icon name="dots"/></button></div>
     </aside>
 
     <main className="main-area">
-      <header className="topbar"><div className="breadcrumb"><span>Workspace</span><Icon name="chevron" size={14}/><strong>{activeNav === 'Overview' ? 'Overview' : activeNav}</strong></div><div className="top-actions"><button className="top-icon notification" aria-label="Notifications"><Icon name="inbox"/><i/></button><span className="top-divider"/><button className="avatar avatar-lilac top-avatar" aria-label="Your profile">MC</button></div></header>
+      <header className="topbar"><div className="breadcrumb"><span>Workspace</span><Icon name="chevron" size={14}/><strong>{activeNav === 'Projects' && activeProjectId ? projects.find((project) => project.id === activeProjectId)?.name || 'Projects' : activeNav}</strong></div><div className="top-actions"><button className="top-icon notification" aria-label="Open inbox" onClick={() => navigateTo({ page: 'Inbox' })}><Icon name="inbox"/></button><span className="top-divider"/><button className="avatar avatar-lilac top-avatar" aria-label="Workspace profile">W</button></div></header>
       <div className="page-content">
-        <div className="greeting-row"><div><div className="eyebrow"><span className="live-dot"/> {formatUtcDashboardDate(dashboardDate).toUpperCase()}</div><h1>Good morning, Maya <span className="wave">✳</span></h1><p className="subtitle">Here’s what’s happening across your workspace.</p></div><button className="primary-button" onClick={() => openTaskCreate()} disabled={!projects.length}><Icon name="plus" size={17}/> New task</button></div>
-        <section className="stats-grid" aria-label="Workspace summary"><div className="stat-card"><div className="stat-top"><span>Open tasks</span><span className="stat-icon icon-violet"><Icon name="layers" size={17}/></span></div><div className="stat-number">{openTasks}</div><div className="stat-foot">Across {projects.length} projects</div><div className="stat-spark spark-purple"><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/></div></div><div className="stat-card"><div className="stat-top"><span>Completed tasks</span><span className="stat-icon icon-green"><Icon name="check" size={17}/></span></div><div className="stat-number">{completedTasks}</div><div className="stat-foot">From {tasks.length} total tasks</div><div className="stat-spark spark-green"><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/></div></div><div className="stat-card"><div className="stat-top"><span>Due in 7 days</span><span className="stat-icon icon-orange"><Icon name="clock" size={17}/></span></div><div className="stat-number">{dueSoon.length}</div><div className="stat-foot"><span className="trend-warn">{dueSoon.filter((task) => task.dueDate && dayDistance(task.dueDate) === 0).length} due today</span><span> · across {new Set(dueSoon.map((task) => task.projectId)).size} projects</span></div><div className="due-progress"><i/><i/><i/><i/><i/><i/><i/><i/></div></div><div className="stat-card health-card"><div className="stat-top"><span>Completion</span><span className="health-badge"><i/> Live data</span></div><div className="health-content"><div className="health-ring"><span>{completedPercent}<small>%</small></span></div><div><strong>{completedTasks} of {tasks.length} done</strong><p>Based on loaded<br/>project tasks.</p></div></div><div className="stat-foot">{projects.length} projects loaded <span className="health-spark">⌁</span></div></div></section>
-
-        <section className="delivery-risk-panel panel" aria-label="Delivery risk summary">
-          <div className="panel-header"><div><div className="panel-title-row"><h2>Delivery risks</h2><span className="muted-count">Evidence from project data</span></div><p>Deterministic indicators from due dates, priorities, and task dependencies.</p></div><span className="risk-as-of">As of {formatUtcTaskDate(dashboardDate, true)}</span></div>
-          {deliveryRisksLoading && <div className="risk-state" role="status">Loading delivery risk summary…</div>}
-          {!deliveryRisksLoading && deliveryRisksError && <div className="risk-state risk-error" role="alert"><span>{deliveryRisksError}</span><button className="subtle-link" onClick={reloadDeliveryRisks}>Retry</button></div>}
-          {!deliveryRisksLoading && !deliveryRisksError && deliveryRisks && <>
-            <div className="risk-metrics-grid">
-              <div className="risk-metric risk-total"><span>Unique affected tasks</span><strong>{deliveryRisks.summary.uniqueAffectedTasks}</strong><small>of {deliveryRisks.summary.totalTasks} total tasks</small></div>
-              <div className="risk-metric"><span>Overdue</span><strong>{deliveryRisks.summary.overdueTasks}</strong><small>Incomplete past due date</small></div>
-              <div className="risk-metric"><span>Blocked</span><strong>{deliveryRisks.summary.blockedTasks}</strong><small>Waiting on unfinished work</small></div>
-              <div className="risk-metric"><span>Unassigned high priority</span><strong>{deliveryRisks.summary.unassignedHighPriorityTasks}</strong><small>Incomplete and unassigned</small></div>
-              <div className="risk-metric"><span>Dependency bottlenecks</span><strong>{deliveryRisks.summary.dependencyBottlenecks}</strong><small>Multiple incomplete downstream tasks</small></div>
-            </div>
-            {deliveryRisks.tasks.length ? <div className="risk-task-list" aria-label="Tasks affected by delivery risks">{deliveryRisks.tasks.map((item) => <button className="risk-task-row" key={item.task.id} onClick={() => openTask(mapTask(item.task))}>
-              <span className="risk-task-main"><span className="risk-task-key">{item.task.key}</span><strong>{item.task.title}</strong><small>{item.task.project} · {statuses[item.task.status]} · {priorities[item.task.priority]}</small></span>
-              <span className="risk-task-reasons">{item.reasons.map((reason, index) => <span key={`${item.riskTypes[index]}-${reason}`} className={`risk-chip risk-${item.riskTypes[index]}`}>{reason}</span>)}</span>
-              <Icon name="chevron" size={16}/>
-            </button>)}</div> : <div className="risk-state">{deliveryRisks.summary.totalTasks ? 'No delivery risks found in the current task data.' : 'No tasks yet. Delivery risk counts will appear when your workspace has tasks.'}</div>}
-          </>}
-        </section>
-
-        <section className="delivery-grid"><div className="panel work-panel"><div className="panel-header"><div><div className="panel-title-row"><h2>Team workload</h2><span className="muted-count">Current tasks</span></div><p>Tasks assigned across your team</p></div><button className="text-action" onClick={() => setFilter('My tasks')}>View my tasks <Icon name="arrow" size={15}/></button></div>{workloadList.length ? <div className="workload-list">{workloadList.map((person, index) => <div className="workload-row" key={person.name}><span className={`avatar avatar-${colorFor(person.initials)}`}>{person.initials}</span><span className="person-name">{person.name}</span><div className="workload-track"><span className={`workload-fill fill-${index}`} style={{ width: `${person.count / maxWorkload * 100}%` }}/></div><span className="workload-count">{person.count} <small>tasks</small></span></div>)}</div> : <div className="panel-empty">No assigned tasks yet</div>}</div>
-          <div className="panel focus-panel"><div className="panel-header"><div><div className="panel-title-row"><h2>Needs attention</h2><span className="attention-count">{deliveryRisksLoading ? '…' : deliveryRisksError ? '!' : attentionTasks.length}</span></div><p>Same affected tasks and evidence as Delivery Risks</p></div><button className="dots-button" aria-label="More options"><Icon name="dots"/></button></div>{deliveryRisksLoading ? <div className="panel-empty" role="status">Loading delivery risks…</div> : deliveryRisksError ? <div className="panel-empty attention-error" role="alert"><span>{deliveryRisksError}</span><button className="subtle-link" onClick={reloadDeliveryRisks}>Retry</button></div> : attentionTasks.length ? attentionTasks.map((item) => {
-            const isBlocked = item.riskTypes.includes('blocked')
-            const isBottleneck = item.riskTypes.includes('dependency_bottleneck')
-            const isOverdue = item.riskTypes.includes('overdue')
-            const headline = isBlocked ? 'Blocked by prerequisites' : isOverdue ? 'Past due' : isBottleneck ? 'Dependency bottleneck' : 'Unassigned high priority'
-            const icon = isBlocked || isBottleneck || !isOverdue ? 'bolt' : 'calendar'
-            return <button className="attention-item" key={item.task.id} onClick={() => openTask(mapTask(item.task))}><span className={`attention-icon ${isBlocked || isBottleneck ? 'red' : 'amber'}`}><Icon name={icon} size={16}/></span><span className="attention-copy"><strong>{headline} · {item.task.key}</strong><small>{item.task.title} — {item.reasons.join(' · ')}</small></span><span className="attention-tag">{item.riskTypes.map((risk) => riskLabels[risk]).join(' · ')}</span></button>
-          }) : <div className="panel-empty">Nothing needs attention right now</div>}<button className="attention-footer" onClick={() => setFilter('In progress')}>See in-progress work <Icon name="arrow" size={14}/></button></div></section>
-
+        {activeNav === 'Backlog' ? <BacklogView tasks={backlogTasks} projects={projects} loading={loading} error={loadError} savingTaskId={updatingTaskId} onRetry={() => void loadData()} onCreate={() => openTaskCreate('To do', true)} onOpen={openTask} onMoveToActive={(task) => void moveTaskToBacklog(task, false)}/> : activeNav === 'Projects' ? <ProjectsView projects={projects} tasks={tasks} selectedProjectId={activeProjectId} loading={loading} error={loadError} onRetry={() => void loadData()} onSelectProject={(projectId) => navigateTo({ page: 'Projects', projectId })} onBack={() => navigateTo({ page: 'Projects' })} onCreateProject={openProjectCreate} onCreateTask={() => openTaskCreate()} onOpenTask={openTask}/> : activeNav === 'Inbox' ? <InboxView/> : activeNav === 'Insights' ? <InsightsView summary={deliveryRisks} loading={deliveryRisksLoading} error={deliveryRisksError} today={dashboardDate} onRetry={reloadDeliveryRisks} onOpenTask={(task) => openTask(mapTask(task))}/> : <>
+        <div className="greeting-row"><div><div className="eyebrow"><span className="live-dot"/> {formatLocalDashboardDate(dashboardDate).toUpperCase()}</div><h1>{getGreeting(clockNow)} <span className="wave">✳</span></h1><p className="subtitle">Here’s what’s happening across your workspace.</p></div><button className="primary-button" onClick={() => openTaskCreate()} disabled={!projects.length}><Icon name="plus" size={17}/> New task</button></div>
+        <section className="stats-grid" aria-label="Workspace summary"><div className="stat-card"><div className="stat-top"><span>Open tasks</span><span className="stat-icon icon-violet"><Icon name="layers" size={17}/></span></div><div className="stat-number">{loading ? '…' : loadError ? '—' : openTasks}</div><div className="stat-foot">Across {loading ? '…' : loadError ? '—' : projects.length} projects</div><div className="stat-spark spark-purple"><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/></div></div><div className="stat-card"><div className="stat-top"><span>Completed tasks</span><span className="stat-icon icon-green"><Icon name="check" size={17}/></span></div><div className="stat-number">{loading ? '…' : loadError ? '—' : completedTasks}</div><div className="stat-foot">From {loading ? '…' : loadError ? '—' : tasks.length} total tasks</div><div className="stat-spark spark-green"><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/></div></div><div className="stat-card"><div className="stat-top"><span>Due in 7 days</span><span className="stat-icon icon-orange"><Icon name="clock" size={17}/></span></div><div className="stat-number">{loading ? '…' : loadError ? '—' : overviewData.upcomingDueTasks.length}</div><div className="stat-foot"><span className="trend-warn">{loading ? '…' : loadError ? '—' : overviewData.upcomingDueTasks.filter((task) => task.dueDate === dashboardDate).length} due today</span><span> · across {loading ? '…' : loadError ? '—' : new Set(overviewData.upcomingDueTasks.map((task) => task.projectId)).size} projects</span></div><div className="due-progress"><i/><i/><i/><i/><i/><i/><i/><i/></div></div><div className="stat-card health-card"><div className="stat-top"><span>Completion</span><span className="health-badge"><i/> {loading ? 'Loading' : loadError ? 'Unavailable' : 'Live data'}</span></div><div className="health-content"><div className="health-ring"><span>{loading || loadError ? '—' : completedPercent}<small>{loading || loadError ? '' : '%'}</small></span></div><div><strong>{loading || loadError ? '—' : `${completedTasks} of ${tasks.length} done`}</strong><p>Based on loaded<br/>project tasks.</p></div></div><div className="stat-foot">{loading ? 'Loading projects…' : loadError ? 'Project data unavailable' : `${projects.length} projects loaded`} <span className="health-spark">⌁</span></div></div></section>
+        <OverviewHighlights recentTasks={overviewData.recentlyUpdatedTasks} upcomingTasks={overviewData.upcomingDueTasks} loading={loading} error={loadError} onRetry={() => void loadData()} onOpenTask={openTask} onBrowseProjects={() => navigateTo({ page: 'Projects' })}/>
         <section className="tasks-panel panel"><div className="tasks-heading"><div><div className="panel-title-row"><h2>{projects.find((project) => project.id === (projectFilter || activeProjectId))?.name || 'Project work'}</h2><span className="task-total">{filteredTasks.length} tasks</span></div><p>Keep an eye on the work moving your team forward.</p></div><button className="ai-button" onClick={() => setAiOpen(true)}><Icon name="spark" size={16}/> Ask Sprint AI</button></div><div className="task-toolbar"><div className="filter-tabs">{(['All tasks', 'My tasks', 'In progress'] as const).map((item) => <button className={filter === item ? 'selected-tab' : ''} key={item} onClick={() => setFilter(item)}>{item}{item === 'In progress' && <span>{tasks.filter((task) => task.status === 'In progress').length}</span>}</button>)}</div><div className="toolbar-right"><label className="task-search"><Icon name="search" size={15}/><input type="search" aria-label="Search task titles" placeholder="Search task titles…" value={query} onChange={(event) => setQuery(event.target.value)}/></label><button className={`toolbar-button ${showFilter ? 'toolbar-active' : ''}`} aria-expanded={showFilter} onClick={() => setShowFilter((value) => !value)}><Icon name="filter" size={15}/> Filter {hasActiveFilters && <i/>}</button><div className="view-switch"><button aria-label="Board view" className={view === 'Board' ? 'view-active' : ''} onClick={() => setView('Board')}><Icon name="board" size={16}/></button><button aria-label="List view" className={view === 'List' ? 'view-active' : ''} onClick={() => setView('List')}><Icon name="list" size={16}/></button></div></div></div>
           {showFilter && <div className="task-filter-panel">
             <label>Status<select aria-label="Filter by status" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as Status | '')}><option value="">Any status</option>{columns.map((status) => <option key={status} value={status}>{status}</option>)}</select></label>
             <label>Priority<select aria-label="Filter by priority" value={priorityFilter} onChange={(event) => setPriorityFilter(event.target.value as Priority | '')}><option value="">Any priority</option>{(['Urgent', 'High', 'Medium', 'Low'] as const).map((priority) => <option key={priority}>{priority}</option>)}</select></label>
             <label>Assignee<select aria-label="Filter by assignee" value={assigneeFilter} onChange={(event) => setAssigneeFilter(event.target.value)}><option value="">Anyone</option>{assignees.map((assignee) => <option key={assignee}>{assignee}</option>)}</select></label>
-            <label>Project<select aria-label="Filter by project" value={projectFilter} onChange={(event) => { setActiveProjectId(''); setProjectFilter(event.target.value) }}><option value="">Any project</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name} ({project.key})</option>)}</select></label>
+            <label>Project<select aria-label="Filter by project" value={projectFilter} onChange={(event) => setProjectFilter(event.target.value)}><option value="">Any project</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name} ({project.key})</option>)}</select></label>
             {hasActiveFilters && <button className="clear-filters" onClick={clearFilters}>Clear filters</button>}
           </div>}
           {loading && <div className="api-state" role="status">Loading projects and tasks…</div>}
@@ -604,11 +581,12 @@ function App() {
           {!loading && !loadError && !projects.length && <div className="api-state"><strong>No projects yet</strong><span>Create a project to start adding tasks.</span><button className="primary-button" onClick={openProjectCreate}>Create project <Icon name="plus" size={15}/></button></div>}
           {!loading && !loadError && projects.length > 0 && (filteredTasks.length === 0 ? <div className="task-filter-empty"><strong>{hasActiveFilters ? 'No tasks match these filters' : 'No tasks yet'}</strong><span>{hasActiveFilters ? 'Try changing your search or clearing one or more filters.' : 'Create a task to get this project moving.'}</span><button className="cancel-button" onClick={hasActiveFilters ? clearFilters : () => openTaskCreate() }>{hasActiveFilters ? 'Clear filters' : 'Create task'}</button></div> : view === 'Board' ? <div className="board-grid">{columns.map((status) => <div className="board-column" key={status}><div className="column-head"><span className={`status-dot dot-${status.toLowerCase().replace(' ', '-')}`}/><strong>{status}</strong><span className="column-count">{filteredTasks.filter((task) => task.status === status).length}</span><button className="column-add" onClick={() => openTaskCreate(status)} aria-label={`Add task to ${status}`}><Icon name="plus" size={15}/></button><button className="column-more" aria-label={`More ${status} options`}><Icon name="dots" size={16}/></button></div><div className="column-cards">{filteredTasks.filter((task) => task.status === status).map((task) => <button className="task-card" key={task.apiId} onClick={() => openTask(task)}><div className="task-card-top"><span>{task.id}</span>{task.blocked && <span className="blocked-dot" title="Blocked"/>}<button onClick={(event) => { event.stopPropagation(); openTask(task) }} aria-label={`More options for ${task.id}`}><Icon name="dots" size={15}/></button></div><strong className="task-title">{task.title}</strong><div className="task-labels">{task.labels.slice(0, 2).map((label) => <span key={label} className={`label-chip label-${label.toLowerCase()}`}>{label}</span>)}</div><div className="task-card-foot"><span className={`priority priority-${task.priority.toLowerCase()}`}><i/>{task.priority}</span><span className="due-date"><Icon name="calendar" size={13}/>{task.due}</span><span className={`avatar avatar-${colorFor(task.initials)} mini-avatar`}>{task.initials}</span></div></button>)}</div>{filteredTasks.filter((task) => task.status === status).length === 0 && <div className="empty-column">No tasks here yet</div>}</div>)}</div> : <div className="list-view"><div className="list-head"><span>Task</span><span>Status</span><span>Assignee</span><span>Due date</span><span>Priority</span></div>{filteredTasks.map((task) => <button className="list-row" key={task.apiId} onClick={() => openTask(task)}><span className="list-task"><span className={`status-dot dot-${task.status.toLowerCase().replace(' ', '-')}`}/><span><strong>{task.title}</strong><small>{task.id} · {task.project}</small></span></span><span className="list-status">{task.status}</span><span className="list-assignee"><span className={`avatar avatar-${colorFor(task.initials)} mini-avatar`}>{task.initials}</span>{task.assignee}</span><span className="list-date"><Icon name="calendar" size={13}/>{task.due}</span><span className={`priority priority-${task.priority.toLowerCase()}`}><i/>{task.priority}</span></button>)}</div>)}
         </section>
-        <footer className="page-footer"><span>Made for teams that ship thoughtfully.</span><span><i className="footer-dot"/> API connected · {projects.length} projects · {tasks.length} tasks</span></footer>
+        <footer className="page-footer"><span>Made for teams that ship thoughtfully.</span><span><i className="footer-dot"/> {loading ? 'Loading workspace data…' : loadError ? 'Workspace data unavailable' : `API connected · ${projects.length} projects · ${tasks.length} tasks`}</span></footer>
+        </>}
       </div>
     </main>
 
-    {selected && <div className="overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelected(null) }}><aside className="detail-drawer"><div className="drawer-top"><span className="drawer-id">{selected.id}</span><div><button className="icon-button" onClick={() => setSelected(null)} aria-label="Close"><Icon name="close"/></button></div></div><h2 className="drawer-title">{selected.title}</h2><div className="drawer-controls"><label>Status<select disabled={updatingTaskId === selected.apiId} value={selected.status} onChange={(event) => void updateTask(selected, { status: apiStatuses[event.target.value as Status] })}>{columns.map((status) => <option key={status}>{status}</option>)}</select></label><label>Priority<select disabled={updatingTaskId === selected.apiId} value={selected.priority} onChange={(event) => void updateTask(selected, { priority: apiPriorities[event.target.value as Priority] })}>{['Urgent', 'High', 'Medium', 'Low'].map((priority) => <option key={priority}>{priority}</option>)}</select></label></div>{updatingTaskId === selected.apiId && <div className="drawer-saving" role="status">Saving task…</div>}{saveError && <div className="inline-error" role="alert">{saveError}</div>}<div className="drawer-fields"><label className="task-edit-field"><span>Assignee</span><div><input value={assigneeDraft} onChange={(event) => setAssigneeDraft(event.target.value)} maxLength={120} placeholder="Unassigned" disabled={updatingTaskId === selected.apiId}/><button className="subtle-link" disabled={updatingTaskId === selected.apiId} onClick={() => void updateTask(selected, { assigneeName: assigneeDraft.trim() || null, assigneeInitials: assigneeDraft.trim() ? assigneeInitials(assigneeDraft) : null })}>Save</button></div><small>Names are free text until workspace members are available.</small></label><label className="task-edit-field"><span>Due date</span><div><input type="date" value={dueDateDraft} onChange={(event) => setDueDateDraft(event.target.value)} disabled={updatingTaskId === selected.apiId}/><button className="subtle-link" disabled={updatingTaskId === selected.apiId} onClick={() => void updateTask(selected, { dueDate: dueDateDraft || null })}>Save</button></div></label><div><span>Project</span><strong><span className="project-dot purple"/>{selected.project}</strong></div><div><span>Labels</span><span className="task-labels">{selected.labels.map((label) => <span className="label-chip" key={label}>{label}</span>)}</span></div></div><div className="drawer-section"><h3>Description</h3>{editingDescription ? <><textarea className="description-editor" value={descriptionDraft} onChange={(event) => setDescriptionDraft(event.target.value)} maxLength={2000}/><div className="drawer-actions"><button className="cancel-button" onClick={() => setEditingDescription(false)}>Cancel</button><button className="primary-button" disabled={updatingTaskId === selected.apiId} onClick={async () => { const updated = await updateTask(selected, { description: descriptionDraft }); if (updated) setEditingDescription(false) }}>Save description</button></div></> : <><p>{selected.description || 'No description yet.'}</p><button className="subtle-link" onClick={() => { setDescriptionDraft(selected.description); setEditingDescription(true) }}>Edit description</button></>}</div><section className="drawer-section"><div className="section-title-row"><h3>Dependencies</h3></div>{dependenciesLoading ? <div className="comments-state" role="status">Loading dependencies…</div> : dependenciesError ? <div className="comments-error" role="alert"><span>{dependenciesError}</span><button className="subtle-link" onClick={() => setDependenciesReloadKey((current) => current + 1)}>Retry</button></div> : dependencies.length ? <div className="dependency-list">{dependencies.map((dependency) => <div className="dependency-row" key={dependency.dependsOnTaskId}><Icon name="link" size={15}/><span><small>{dependency.key} · {statuses[dependency.status]}</small><strong>{dependency.title}</strong></span><button className="subtle-link" disabled={dependencySaving} onClick={() => void removeTaskDependency(dependency.dependsOnTaskId)} aria-label={`Remove dependency ${dependency.key}`}>Remove</button></div>)}</div> : <div className="dependency-empty"><Icon name="link" size={15}/> No dependencies tracked</div>}<div className="dependency-add"><select aria-label="Select prerequisite task" value={dependencyCandidate} onChange={(event) => setDependencyCandidate(event.target.value)} disabled={dependencySaving || dependenciesLoading || Boolean(dependenciesError) || !dependencyOptions.length}><option value="">Select a prerequisite task</option>{dependencyOptions.map((task) => <option key={task.apiId} value={task.apiId}>{task.id} · {task.title}</option>)}</select><button className="cancel-button" disabled={!dependencyCandidate || dependencySaving || Boolean(dependenciesError)} onClick={() => void addTaskDependency()}>{dependencySaving ? 'Saving…' : 'Add dependency'}</button></div><small className="field-hint">A prerequisite is work that must finish before this task.</small>{dependents.length > 0 && <div className="dependency-impact-group"><h4>Direct dependents</h4>{dependents.map((item) => <div className="dependency-impact-row" key={item.taskId}><strong>{item.key}</strong><span>{item.title}</span></div>)}</div>}<div className="dependency-impact-group"><h4>Downstream impact</h4>{dependencyImpact.length ? dependencyImpact.map((item) => <div className="dependency-impact-row" key={item.taskId}><strong>{item.key}</strong><span>{item.title}</span><small>{item.depth === 1 ? "Direct" : `${item.depth} steps downstream`}</small></div>) : <div className="dependency-empty">No downstream tasks are blocked by this task.</div>}</div></section><div className="drawer-section activity-section"><div className="section-title-row"><h3>Activity</h3>{activity.length > 0 && <span className="comment-count">{activity.length}</span>}</div>{activityLoading ? <div className="comments-state" role="status">Loading activity…</div> : activityError ? <div className="comments-error" role="alert"><span>{activityError}</span><button className="subtle-link" onClick={() => setActivityReloadKey((current) => current + 1)}>Retry</button></div> : activity.length ? <div className="activity-list">{activity.map((event) => <div className="activity-entry" key={event.id}><span className={`avatar mini-avatar activity-mark ${event.eventType === 'task_created' ? 'avatar-peach' : 'avatar-lilac'}`}><Icon name={event.eventType === 'task_created' ? 'check' : 'clock'} size={12}/></span><p>{activityMessage(event)}<small><time dateTime={event.createdAt}>{formatTimestamp(event.createdAt)}</time></small></p></div>)}</div> : <div className="comments-state">No activity recorded yet.</div>}</div><div className="drawer-section comments-section"><div className="section-title-row"><h3>Comments</h3><span className="comment-count">{comments.length}</span></div>{commentsLoading ? <div className="comments-state" role="status">Loading comments…</div> : commentsError ? <div className="comments-error" role="alert"><span>{commentsError}</span><button className="subtle-link" onClick={() => setCommentsReloadKey((current) => current + 1)}>Retry</button></div> : comments.length ? <div className="comment-list">{comments.map((comment) => <article className="comment-item" key={comment.id}><p>{comment.body}</p><time dateTime={comment.createdAt}>{formatTimestamp(comment.createdAt)}</time>{comment.updatedAt !== comment.createdAt && <small>Edited {formatTimestamp(comment.updatedAt)}</small>}</article>)}</div> : <div className="comments-state">No comments yet. Start the conversation.</div>}</div><div className="comment-composer"><label htmlFor="task-comment">Write a comment</label><textarea id="task-comment" value={commentDraft} onChange={(event) => setCommentDraft(event.target.value)} maxLength={5000} placeholder="Share an update with your team…" disabled={commentSaving}/>{commentSaveError && <div className="inline-error" role="alert">{commentSaveError}</div>}<div className="comment-composer-footer"><span>{commentDraft.length}/5000</span><button className="primary-button" onClick={() => void postComment()} disabled={commentSaving || !commentDraft.trim()}>{commentSaving ? 'Posting…' : 'Post comment'}</button></div></div></aside></div>}
+    {selected && <div className="overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelected(null) }}><aside className="detail-drawer"><div className="drawer-top"><span className="drawer-id">{selected.id}</span><div><button className="icon-button" onClick={() => setSelected(null)} aria-label="Close"><Icon name="close"/></button></div></div><h2 className="drawer-title">{selected.title}</h2><button className="drawer-backlog-toggle" disabled={updatingTaskId === selected.apiId} onClick={() => void moveTaskToBacklog(selected, !selected.isBacklog)}>{selected.isBacklog ? 'Move to active work' : 'Move to backlog'}</button><div className="drawer-controls"><label>Status<select disabled={updatingTaskId === selected.apiId} value={selected.status} onChange={(event) => void updateTask(selected, { status: apiStatuses[event.target.value as Status] })}>{columns.map((status) => <option key={status}>{status}</option>)}</select></label><label>Priority<select disabled={updatingTaskId === selected.apiId} value={selected.priority} onChange={(event) => void updateTask(selected, { priority: apiPriorities[event.target.value as Priority] })}>{['Urgent', 'High', 'Medium', 'Low'].map((priority) => <option key={priority}>{priority}</option>)}</select></label></div>{updatingTaskId === selected.apiId && <div className="drawer-saving" role="status">Saving task…</div>}{saveError && <div className="inline-error" role="alert">{saveError}</div>}<div className="drawer-fields"><label className="task-edit-field"><span>Assignee</span><div><input value={assigneeDraft} onChange={(event) => setAssigneeDraft(event.target.value)} maxLength={120} placeholder="Unassigned" disabled={updatingTaskId === selected.apiId}/><button className="subtle-link" disabled={updatingTaskId === selected.apiId} onClick={() => void updateTask(selected, { assigneeName: assigneeDraft.trim() || null, assigneeInitials: assigneeDraft.trim() ? assigneeInitials(assigneeDraft) : null })}>Save</button></div><small>Names are free text until workspace members are available.</small></label><label className="task-edit-field"><span>Due date</span><div><input type="date" value={dueDateDraft} onChange={(event) => setDueDateDraft(event.target.value)} disabled={updatingTaskId === selected.apiId}/><button className="subtle-link" disabled={updatingTaskId === selected.apiId} onClick={() => void updateTask(selected, { dueDate: dueDateDraft || null })}>Save</button></div></label><div><span>Project</span><strong><span className="project-dot purple"/>{selected.project}</strong></div><div><span>Labels</span><span className="task-labels">{selected.labels.map((label) => <span className="label-chip" key={label}>{label}</span>)}</span></div></div><div className="drawer-section"><h3>Description</h3>{editingDescription ? <><textarea className="description-editor" value={descriptionDraft} onChange={(event) => setDescriptionDraft(event.target.value)} maxLength={2000}/><div className="drawer-actions"><button className="cancel-button" onClick={() => setEditingDescription(false)}>Cancel</button><button className="primary-button" disabled={updatingTaskId === selected.apiId} onClick={async () => { const updated = await updateTask(selected, { description: descriptionDraft }); if (updated) setEditingDescription(false) }}>Save description</button></div></> : <><p>{selected.description || 'No description yet.'}</p><button className="subtle-link" onClick={() => { setDescriptionDraft(selected.description); setEditingDescription(true) }}>Edit description</button></>}</div><section className="drawer-section"><div className="section-title-row"><h3>Dependencies</h3></div>{dependenciesLoading ? <div className="comments-state" role="status">Loading dependencies…</div> : dependenciesError ? <div className="comments-error" role="alert"><span>{dependenciesError}</span><button className="subtle-link" onClick={() => setDependenciesReloadKey((current) => current + 1)}>Retry</button></div> : dependencies.length ? <div className="dependency-list">{dependencies.map((dependency) => <div className="dependency-row" key={dependency.dependsOnTaskId}><Icon name="link" size={15}/><span><small>{dependency.key} · {statuses[dependency.status]}</small><strong>{dependency.title}</strong></span><button className="subtle-link" disabled={dependencySaving} onClick={() => void removeTaskDependency(dependency.dependsOnTaskId)} aria-label={`Remove dependency ${dependency.key}`}>Remove</button></div>)}</div> : <div className="dependency-empty"><Icon name="link" size={15}/> No dependencies tracked</div>}<div className="dependency-add"><select aria-label="Select prerequisite task" value={dependencyCandidate} onChange={(event) => setDependencyCandidate(event.target.value)} disabled={dependencySaving || dependenciesLoading || Boolean(dependenciesError) || !dependencyOptions.length}><option value="">Select a prerequisite task</option>{dependencyOptions.map((task) => <option key={task.apiId} value={task.apiId}>{task.id} · {task.title}</option>)}</select><button className="cancel-button" disabled={!dependencyCandidate || dependencySaving || Boolean(dependenciesError)} onClick={() => void addTaskDependency()}>{dependencySaving ? 'Saving…' : 'Add dependency'}</button></div><small className="field-hint">A prerequisite is work that must finish before this task.</small>{dependents.length > 0 && <div className="dependency-impact-group"><h4>Direct dependents</h4>{dependents.map((item) => <div className="dependency-impact-row" key={item.taskId}><strong>{item.key}</strong><span>{item.title}</span></div>)}</div>}<div className="dependency-impact-group"><h4>Downstream impact</h4>{dependencyImpact.length ? dependencyImpact.map((item) => <div className="dependency-impact-row" key={item.taskId}><strong>{item.key}</strong><span>{item.title}</span><small>{item.depth === 1 ? "Direct" : `${item.depth} steps downstream`}</small></div>) : <div className="dependency-empty">No downstream tasks are blocked by this task.</div>}</div></section><div className="drawer-section activity-section"><div className="section-title-row"><h3>Activity</h3>{activity.length > 0 && <span className="comment-count">{activity.length}</span>}</div>{activityLoading ? <div className="comments-state" role="status">Loading activity…</div> : activityError ? <div className="comments-error" role="alert"><span>{activityError}</span><button className="subtle-link" onClick={() => setActivityReloadKey((current) => current + 1)}>Retry</button></div> : activity.length ? <div className="activity-list">{activity.map((event) => <div className="activity-entry" key={event.id}><span className={`avatar mini-avatar activity-mark ${event.eventType === 'task_created' ? 'avatar-peach' : 'avatar-lilac'}`}><Icon name={event.eventType === 'task_created' ? 'check' : 'clock'} size={12}/></span><p>{activityMessage(event)}<small><time dateTime={event.createdAt}>{formatTimestamp(event.createdAt)}</time></small></p></div>)}</div> : <div className="comments-state">No activity recorded yet.</div>}</div><div className="drawer-section comments-section"><div className="section-title-row"><h3>Comments</h3><span className="comment-count">{comments.length}</span></div>{commentsLoading ? <div className="comments-state" role="status">Loading comments…</div> : commentsError ? <div className="comments-error" role="alert"><span>{commentsError}</span><button className="subtle-link" onClick={() => setCommentsReloadKey((current) => current + 1)}>Retry</button></div> : comments.length ? <div className="comment-list">{comments.map((comment) => <article className="comment-item" key={comment.id}><p>{comment.body}</p><time dateTime={comment.createdAt}>{formatTimestamp(comment.createdAt)}</time>{comment.updatedAt !== comment.createdAt && <small>Edited {formatTimestamp(comment.updatedAt)}</small>}</article>)}</div> : <div className="comments-state">No comments yet. Start the conversation.</div>}</div><div className="comment-composer"><label htmlFor="task-comment">Write a comment</label><textarea id="task-comment" value={commentDraft} onChange={(event) => setCommentDraft(event.target.value)} maxLength={5000} placeholder="Share an update with your team…" disabled={commentSaving}/>{commentSaveError && <div className="inline-error" role="alert">{commentSaveError}</div>}<div className="comment-composer-footer"><span>{commentDraft.length}/5000</span><button className="primary-button" onClick={() => void postComment()} disabled={commentSaving || !commentDraft.trim()}>{commentSaving ? 'Posting…' : 'Post comment'}</button></div></div></aside></div>}
 
     {aiOpen && <div className="modal-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) setAiOpen(false) }}><section className="ai-modal"><div className="ai-modal-head"><div className="ai-mark"><Icon name="spark" size={19}/></div><div><h2>Break work into clear tasks</h2><p>Sprint AI · Preview only</p></div><button className="icon-button" onClick={() => setAiOpen(false)} aria-label="Close"><Icon name="close"/></button></div><div className="ai-source"><span className="source-icon"><Icon name="bolt" size={15}/></span><span><strong>Workspace data connection</strong><small>AI assistance is not connected in this phase.</small></span></div><div className="ai-suggestions"><h3>What Sprint AI will help with</h3><p>Task breakdowns and risk summaries will be added in a later phase. No data will be changed from this preview.</p></div><button className="primary-button" onClick={() => setAiOpen(false)}>Close preview</button></section></div>}
 

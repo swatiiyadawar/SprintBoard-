@@ -6,6 +6,7 @@ const { createApp } = require('../src/app')
 const projectId = 'e5654d97-7020-4ca8-9477-8294f8da1930'
 const secondProjectId = 'a78014f9-27b5-4f06-b952-b422e20103ae'
 const taskId = 'f9d2c94f-cd8b-4cd7-8d46-91fca8667772'
+const createdTaskId = '0465b471-3943-44c4-a392-b83e0e588ae8'
 const commentId = '1773d4c1-e124-4f24-a9c7-30ad94a70ca1'
 let server
 let baseUrl
@@ -45,13 +46,14 @@ const tasks = {
     (!filters.projectId || task.projectId === filters.projectId) &&
     (!filters.status || task.status === filters.status) &&
     (!filters.priority || task.priority === filters.priority) &&
-    (!filters.assignee || task.assigneeName?.toLowerCase() === filters.assignee.toLowerCase()),
+    (!filters.assignee || task.assigneeName?.toLowerCase() === filters.assignee.toLowerCase()) &&
+    (filters.isBacklog === undefined || task.isBacklog === filters.isBacklog),
   ).slice(filters.offset, filters.offset + filters.limit),
   getById: async (id) => state.tasks.find((task) => task.id === id) || null,
   create: async (id, input) => {
     const project = state.projects.find((item) => item.id === id)
     if (!project) { const error = new Error('foreign key'); error.code = '23503'; throw error }
-    const task = { id: taskId, key: `${project.key}-${state.tasks.length + 1}`, projectId: id, project: project.name, ...input }
+    const task = { id: createdTaskId, key: `${project.key}-${state.tasks.length + 1}`, projectId: id, project: project.name, ...input }
     state.tasks.push(task)
     return task
   },
@@ -132,8 +134,8 @@ beforeEach(() => {
   state = {
     projects: [{ id: projectId, name: 'Platform', key: 'PLAT', description: null }],
     tasks: [
-      { id: taskId, key: 'PLAT-1', projectId, project: 'Platform', title: 'Ship API', status: 'in_progress', priority: 'high', assigneeName: 'Maya Chen' },
-      { id: '85e9a2ca-644f-4c2f-9e5d-7d4c9d4b8a41', key: 'PLAT-2', projectId, project: 'Platform', title: 'Write docs', status: 'backlog', priority: 'low', assigneeName: 'Jon Bell' },
+      { id: taskId, key: 'PLAT-1', projectId, project: 'Platform', title: 'Ship API', status: 'in_progress', priority: 'high', assigneeName: 'Maya Chen', isBacklog: false },
+      { id: '85e9a2ca-644f-4c2f-9e5d-7d4c9d4b8a41', key: 'PLAT-2', projectId, project: 'Platform', title: 'Write docs', status: 'backlog', priority: 'low', assigneeName: 'Jon Bell', isBacklog: true },
     ],
     comments: [],
     dependencies: [],
@@ -223,6 +225,10 @@ test('GET /api/tasks supports validated filters and pagination', async () => {
   const invalid = await fetch(`${baseUrl}/api/tasks?status=started`)
   assert.equal(invalid.status, 400)
   assert.equal((await invalid.json()).error.code, 'INVALID_INPUT')
+  const backlog = await fetch(`${baseUrl}/api/tasks?isBacklog=true`)
+  assert.equal((await backlog.json()).data[0].key, 'PLAT-2')
+  const active = await fetch(`${baseUrl}/api/tasks?isBacklog=false`)
+  assert.equal((await active.json()).data[0].key, 'PLAT-1')
 })
 
 test('POST /api/tasks creates a dashboard-ready task; nested Phase 1 alias remains', async () => {
@@ -236,8 +242,30 @@ test('POST /api/tasks creates a dashboard-ready task; nested Phase 1 alias remai
   assert.equal(task.status, 'backlog')
   assert.equal(task.priority, 'medium')
   assert.equal(task.blocked, false)
+  assert.equal(task.isBacklog, false)
   const nested = await fetch(`${baseUrl}/api/projects/${projectId}/tasks`)
   assert.equal(nested.status, 200)
+})
+
+test('backlog task creation, listing, and active-work moves retain membership across API reads', async () => {
+  const created = await fetch(`${baseUrl}/api/tasks`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ projectId, title: 'Backlog API task', isBacklog: true }),
+  })
+  assert.equal(created.status, 201)
+  const task = (await created.json()).data
+  assert.equal(task.isBacklog, true)
+
+  const listed = await fetch(`${baseUrl}/api/tasks?isBacklog=true`)
+  assert.ok((await listed.json()).data.some((item) => item.id === task.id))
+
+  const moved = await fetch(`${baseUrl}/api/tasks/${task.id}`, {
+    method: 'PATCH', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ isBacklog: false }),
+  })
+  assert.equal((await moved.json()).data.isBacklog, false)
+  const active = await fetch(`${baseUrl}/api/tasks?isBacklog=false`)
+  assert.ok((await active.json()).data.some((item) => item.id === task.id))
 })
 
 test('GET, PATCH, and DELETE /api/tasks/:id work and validate task fields', async () => {
